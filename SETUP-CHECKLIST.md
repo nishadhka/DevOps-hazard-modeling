@@ -12,9 +12,9 @@ This checklist tracks our progress in setting up the CI/CD pipeline for the haza
 
 ## Docker Hub Configuration
 
-- [x] Create Docker Hub account (if not already done)
-- [x] Create access token for GitHub Actions
-- [x] Add token to GitHub Secrets (DOCKERHUB_USERNAME, DOCKERHUB_TOKEN)
+- [] Create Docker Hub account (if not already done)
+- [] Create access token for GitHub Actions
+- [] Add token to GitHub Secrets (DOCKERHUB_USERNAME, DOCKERHUB_TOKEN)
 
 ## GitHub Secrets Configuration
 
