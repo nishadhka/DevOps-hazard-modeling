@@ -69,16 +69,6 @@ Shapefiles are essential for GeoSFM spatial analysis. To upload shapefiles to yo
 2. Select all components of your shapefile (typically including .shp, .shx, .dbf, .prj files)
 3. Click "Upload" to transfer the files to your Coiled environment
 
-Alternatively, if your shapefiles are stored in cloud storage:
-
-```python
-# For GCP Cloud Storage
-!gsutil cp gs://your-bucket/path/to/shapefile/* ./shapefiles/
-
-# For AWS S3
-!aws s3 cp s3://your-bucket/path/to/shapefile/ ./shapefiles/ --recursive
-```
-
 ## Best Practices for GeoSFM Processing in Coiled
 
 1. **Memory Management**: GeoSFM processing can be memory-intensive. If you encounter memory issues:
