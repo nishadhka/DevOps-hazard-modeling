@@ -8,11 +8,15 @@ SPEI is a multi-scalar drought index that accounts for both precipitation and po
 
 ### Xclim for SPEI calculation
 
-The Standardized Precipitation Evapotranspiration Index (SPEI) is calculated through a two-step process in the xclim library. First, a water budget is computed using the water_budget function, which calculates the difference between precipitation and potential evapotranspiration (P-PET). This function accepts daily precipitation data along with various meteorological variables (temperature, radiation, humidity, and wind) to estimate evapotranspiration using the Baier-Robertson (BR65) method when direct PET measurements aren't available. Once the water budget is determined, the standardized_precipitation_evapotranspiration_index function aggregates these values over specified time periods (typically 1, 3, 6, or 12 months), fits the data to a statistical distribution (commonly gamma), and transforms the cumulative probability to a standard normal distribution with mean zero and variance one. This transformation allows meaningful comparison of drought conditions across different climate regions and time periods, making SPEI an invaluable tool for monitoring agricultural drought, as negative values indicate water deficit conditions of varying severity.
+The Standardized Precipitation Evapotranspiration Index (SPEI) is calculated through a two-step process in the xclim library. First, a water budget is computed using the `water_budget` function, which calculates the difference between precipitation and potential evapotranspiration (P-PET). This function accepts daily precipitation data along with various meteorological variables (temperature, radiation, humidity, and wind) to estimate evapotranspiration using the Baier-Robertson (BR65) method when direct PET measurements aren't available. Once the water budget is determined, the `standardized_precipitation_evapotranspiration_index` function aggregates these values over specified time periods (typically 1, 3, 6, or 12 months), fits the data to a statistical distribution (commonly gamma), and transforms the cumulative probability to a standard normal distribution with mean zero and variance one. This transformation allows meaningful comparison of drought conditions across different climate regions and time periods, making SPEI an invaluable tool for monitoring agricultural drought, as negative values indicate water deficit conditions of varying severity.
 
 https://xclim.readthedocs.io/en/stable/indices.html#xclim.indices.water_budget
 
 ## 2. Data Sources
+
+### 2.0 AWS S3 source of NOAA CFS dataset 
+
+
 
 ### 2.1 NOAA CFS Forecast Data
 
