@@ -45,75 +45,140 @@ class GribToZarrConverter:
                 
         return aligned_datasets
     
-    def _process_daily_data(self, ds: xr.Dataset) -> xr.Dataset:
-        """Process daily aggregated variables"""
-        # Convert step to actual datetime using valid_time if available
-        if 'valid_time' in ds.coords:
-            valid_times = ds.valid_time.values
-        else:
-            forecast_time = ds.time.values
-            valid_times = pd.to_datetime(forecast_time) + ds.step.values
-
-        ds = ds.rename({'time': 'initial_time'})
+    def load_grib_with_separation(self, grib_path: str) -> Dict[str, xr.Dataset]:
+        """Load GRIB file with proper variable separation - SIMPLIFIED VERSION"""
         
-        # Create new time coordinate
-        ds_aligned = ds.assign_coords(forecast_time=('step', valid_times))
-        ds_aligned = ds_aligned.swap_dims({'step': 'forecast_time'})
-        ds_aligned = ds_aligned.drop_vars(['step'])
-        if 'valid_time' in ds_aligned.coords:
-            ds_aligned = ds_aligned.drop_vars(['valid_time'])
+        datasets = {}
+        
+        try:
+            # Use cfgrib.open_datasets which already separates by temporal resolution
+            logger.info("Loading GRIB datasets...")
+            all_datasets = cfgrib.open_datasets(grib_path, decode_timedelta=False)
+            
+            logger.info(f"Found {len(all_datasets)} datasets in GRIB file")
+            
+            for i, ds in enumerate(all_datasets):
+                logger.info(f"Dataset {i}: {dict(ds.dims)}, variables: {list(ds.data_vars.keys())}")
+                
+                # Determine dataset type based on variables present
+                ds_vars = set(ds.data_vars.keys())
+                daily_overlap = len(ds_vars.intersection(self.daily_vars))
+                sixhourly_overlap = len(ds_vars.intersection(self.sixhourly_vars))
+                
+                if daily_overlap > 0 and sixhourly_overlap == 0:
+                    dataset_type = 'daily'
+                    logger.info(f"Dataset {i} identified as DAILY: {list(ds_vars)}")
+                elif sixhourly_overlap > 0 and daily_overlap == 0:
+                    dataset_type = 'sixhourly'
+                    logger.info(f"Dataset {i} identified as 6-HOURLY: {list(ds_vars)}")
+                else:
+                    # Mixed or unclear - use step count as fallback
+                    if ds.sizes.get('step', 0) > 500:
+                        dataset_type = 'sixhourly'
+                        logger.info(f"Dataset {i} identified as 6-HOURLY (by step count): {ds.sizes['step']} steps")
+                    else:
+                        dataset_type = 'daily'
+                        logger.info(f"Dataset {i} identified as DAILY (by step count): {ds.sizes['step']} steps")
+                
+                # Store the dataset
+                if dataset_type in datasets:
+                    logger.warning(f"Multiple {dataset_type} datasets found - merging is not implemented")
+                    # For now, keep the first one and close the duplicate
+                    ds.close()
+                else:
+                    datasets[dataset_type] = ds
+            
+            logger.info(f"Successfully loaded {len(datasets)} dataset types: {list(datasets.keys())}")
+            
+        except Exception as e:
+            logger.error(f"Failed to load GRIB datasets: {e}")
+            # Clean up any opened datasets
+            if 'all_datasets' in locals():
+                for ds in all_datasets:
+                    if hasattr(ds, 'close'):
+                        ds.close()
+            raise
+        
+        return datasets 
 
-        ds_aligned.attrs = ds.attrs.copy()
-
-        # Enrich with additional metadata
-        ds_aligned.attrs.update({
-            "GRIB_edition":"1",
-            "GRIB_centre":"ecmf",
-            "GRIB_centreDescription":"European Centre for Medium-Range Weather Forecasts",
-            "GRIB_subCentre":"0",
-            "Conventions":"CF-1.7",
-            "institution":"European Centre for Medium-Range Weather Forecasts",
-            "processed_by": "GribToZarrConverter",
-            "processing_notes": "Time variable preserved as 'initial_time'; main time axis is 'forecast_time';merged the 6 hourly and daily data in forecast_time axis",
-            "institution": "ICPAC-DRM",
-            "history": f"Converted from GRIB using cfgrib and aligned with forecast_time. {ds.attrs.get('history', '')}"
+    def _process_sixhourly_data(self, ds: xr.Dataset, initial_time: pd.Timestamp) -> xr.Dataset:
+        """Process 6-hourly variables with proper CF convention structure"""
+        
+        # Keep step as step (forecast lead time as timedelta)
+        forecast_steps = pd.to_timedelta(ds.step.values)
+        
+        # Create processed dataset with CF convention structure
+        ds_processed = ds.copy()
+        # Keep 'step' as 'step' and rename 'time' to 'time' (initialization time)
+        if 'time' in ds_processed.coords:
+            ds_processed = ds_processed.assign_coords(time=initial_time)
+        else:
+            ds_processed = ds_processed.assign_coords(time=initial_time)
+        
+        # Ensure step coordinate has proper timedelta values
+        ds_processed = ds_processed.assign_coords(step=forecast_steps)
+        
+        # Calculate valid_time for reference (time + step)
+        valid_times = initial_time + forecast_steps
+        ds_processed = ds_processed.assign_coords(valid_time=('step', valid_times))
+        
+        # Update attributes
+        ds_processed.attrs.update({
+            "GRIB_edition": "1",
+            "GRIB_centre": "ecmf", 
+            "GRIB_centreDescription": "European Centre for Medium-Range Weather Forecasts",
+            "GRIB_subCentre": "0",
+            "Conventions": "CF-1.7",
+            "institution": "European Centre for Medium-Range Weather Forecasts",
+            "processed_by": "GribToZarrConverter_CF",
+            "processing_notes": "CF convention structure: time (init) + step (lead time)",
+            "initial_time_str": str(initial_time),
+            "dataset_type": "sixhourly",
+            "history": f"Converted from GRIB using CF conventions. {ds.attrs.get('history', '')}"
         })
         
-        return ds_aligned
-    
-    def _process_sixhourly_data(self, ds: xr.Dataset) -> xr.Dataset:
-        """Process 6-hourly variables"""
-        if 'valid_time' in ds.coords:
-            valid_times = ds.valid_time.values
-        else:
-            forecast_time = ds.time.values
-            valid_times = pd.to_datetime(forecast_time) + ds.step.values
+        logger.info(f"Processed 6-hourly dataset: {len(forecast_steps)} steps, time: {initial_time}")
+        return ds_processed
 
-        ds = ds.rename({'time': 'initial_time'})
+
+    def _process_daily_data(self, ds: xr.Dataset, initial_time: pd.Timestamp) -> xr.Dataset:
+        """Process daily aggregated variables with proper CF convention structure"""
         
-        ds_aligned = ds.assign_coords(forecast_time=('step', valid_times))
-        ds_aligned = ds_aligned.swap_dims({'step': 'forecast_time'})
-        ds_aligned = ds_aligned.drop_vars(['step'])
-        if 'valid_time' in ds_aligned.coords:
-            ds_aligned = ds_aligned.drop_vars(['valid_time'])
-
-        ds_aligned.attrs = ds.attrs.copy()
-
-        # Enrich with additional metadata
-        ds_aligned.attrs.update({
-            "GRIB_edition":"1",
-            "GRIB_centre":"ecmf",
-            "GRIB_centreDescription":"European Centre for Medium-Range Weather Forecasts",
-            "GRIB_subCentre":"0",
-            "Conventions":"CF-1.7",
-            "institution":"European Centre for Medium-Range Weather Forecasts",
-            "processed_by": "GribToZarrConverter",
-            "processing_notes": "Time variable preserved as 'initial_time'; main time axis is 'forecast_time';merged the 6 hourly and daily data in forecast_time axis",
-            "institution": "ICPAC-DRM",
-            "history": f"Converted from GRIB using cfgrib and aligned with forecast_time. {ds.attrs.get('history', '')}"
+        # Keep step as step (forecast lead time as timedelta)  
+        forecast_steps = pd.to_timedelta(ds.step.values)
+        
+        # Create processed dataset with CF convention structure
+        ds_processed = ds.copy()
+        # Keep 'step' as 'step' and rename 'time' to 'time' (initialization time)
+        if 'time' in ds_processed.coords:
+            ds_processed = ds_processed.assign_coords(time=initial_time)
+        else:
+            ds_processed = ds_processed.assign_coords(time=initial_time)
+        
+        # Ensure step coordinate has proper timedelta values
+        ds_processed = ds_processed.assign_coords(step=forecast_steps)
+        
+        # Calculate valid_time for reference (time + step)
+        valid_times = initial_time + forecast_steps
+        ds_processed = ds_processed.assign_coords(valid_time=('step', valid_times))
+        
+        # Update attributes
+        ds_processed.attrs.update({
+            "GRIB_edition": "1",
+            "GRIB_centre": "ecmf",
+            "GRIB_centreDescription": "European Centre for Medium-Range Weather Forecasts", 
+            "GRIB_subCentre": "0",
+            "Conventions": "CF-1.7",
+            "institution": "European Centre for Medium-Range Weather Forecasts",
+            "processed_by": "GribToZarrConverter_CF",
+            "processing_notes": "CF convention structure: time (init) + step (lead time)",
+            "initial_time_str": str(initial_time),
+            "dataset_type": "daily",
+            "history": f"Converted from GRIB using CF conventions. {ds.attrs.get('history', '')}"
         })
-
-        return ds_aligned
+        
+        logger.info(f"Processed daily dataset: {len(forecast_steps)} steps, time: {initial_time}")
+        return ds_processed
     
     def create_unified_dataset(self, aligned_datasets: Dict[str, xr.Dataset]) -> xr.Dataset:
         """Merge daily and 6-hourly datasets with minimal memory footprint"""
@@ -634,6 +699,315 @@ class GribToZarrConverter:
         
         return validation_info
 
+    def initialize_zarr_store_with_multi_init(self, sample_ds: xr.Dataset, 
+                                        initial_times: List[pd.Timestamp]) -> str:
+        """Initialize store with proper CF convention multi-initialization structure"""
+        
+        zarr_path = f'gs://{self.gcs_bucket}/{self.zarr_path}'
+        
+        # Use the actual forecast steps from the sample dataset (860 steps)
+        # This should be 6-hourly resolution matching what's in the GRIB files
+        if 'step' in sample_ds.coords:
+            forecast_steps = pd.to_timedelta(sample_ds.step.values)
+        else:
+            # Fallback: create 860 six-hourly steps (matching GRIB structure)
+            forecast_steps = pd.timedelta_range('6h', periods=860, freq='6h')
+        
+        logger.info(f"Using step coordinate: {len(forecast_steps)} steps (should be 860)")
+        
+        # Create coordinate structure - CF CONVENTION
+        coords = {
+            'time': sorted(initial_times),                   # Initialization times (CF convention)
+            'step': forecast_steps,                          # Forecast lead times as timedelta (CF convention)
+            'number': sample_ds.number.values,               # Ensemble members
+            'latitude': sample_ds.latitude.values,           # Latitude points
+            'longitude': sample_ds.longitude.values          # Longitude points
+        }
+        
+        # Create shape for CF convention structure
+        shape = (
+            len(coords['time']),             # Number of initialization times
+            len(coords['step']),             # Number of forecast steps
+            len(coords['number']),           # Ensemble members
+            len(coords['latitude']),         # Latitude points  
+            len(coords['longitude'])         # Longitude points
+        )
+        
+        # Create data variables for all expected variables
+        data_vars = {}
+        all_vars = list(set(self.daily_vars + self.sixhourly_vars))
+        
+        logger.info(f"Variables in sample_ds: {list(sample_ds.data_vars.keys())}")
+        logger.info(f"All expected vars: {all_vars}")
+        logger.info(f"Creating CF convention zarr shape: {shape}")
+        
+        for var in all_vars:
+            data_vars[var] = (
+                ['time', 'step', 'number', 'latitude', 'longitude'],  # CF convention dimensions
+                np.full(shape, np.nan, dtype=np.float32)
+            )
+        
+        logger.info(f"Creating data_vars: {list(data_vars.keys())}")
+        
+        # Create dataset with proper CF convention structure  
+        init_ds = xr.Dataset(data_vars, coords=coords)
+        
+        # Set chunking - process one time at a time
+        init_ds = init_ds.chunk({
+            'time': 1,                                      # One initialization at a time
+            'step': 168,                                    # 1 week of 6-hourly data
+            'number': len(coords['number']),                # All ensemble members
+            'latitude': len(coords['latitude']),            # All latitudes
+            'longitude': len(coords['longitude'])           # All longitudes
+        })
+        
+        # Set proper encoding for CF convention
+        encoding = {
+            'time': {
+                'units': 'hours since 1970-01-01',
+                'dtype': 'int64',
+                'calendar': 'proleptic_gregorian'
+            },
+            'step': {
+                'units': 'nanoseconds',
+                'dtype': 'int64'
+            }
+        }
+        
+        # Write to zarr with CF convention structure
+        init_ds.to_zarr(
+            zarr_path,
+            mode='w',
+            encoding=encoding,
+            consolidated=False
+        )
+        
+        logger.info(f"Successfully initialized CF convention zarr store:")
+        logger.info(f"  - Initialization times: {len(initial_times)}")
+        logger.info(f"  - Forecast steps: {len(coords['step'])}")
+        logger.info(f"  - Variables: {list(data_vars.keys())}")
+        logger.info(f"  - Shape: {shape}")
+        
+        return zarr_path
+
+
+    def append_to_multi_init_zarr(self, processed_ds: xr.Dataset, dataset_type: str,
+                                initial_time: pd.Timestamp, zarr_path: str):
+        """Append data to CF convention multi-initialization zarr store"""
+        
+        # Open existing zarr to get structure
+        with xr.open_zarr(zarr_path, consolidated=False) as existing_ds:
+            zarr_times = pd.to_datetime(existing_ds.time.values)
+            zarr_steps = pd.to_timedelta(existing_ds.step.values)
+        
+        # Find the index for this initialization time
+        try:
+            time_idx = np.where(zarr_times == initial_time)[0][0]
+        except IndexError:
+            logger.error(f"Initialization time {initial_time} not found in zarr store")
+            logger.error(f"Available times: {zarr_times}")
+            return
+        
+        logger.info(f"Appending {dataset_type} data for time index {time_idx}")
+        
+        # Align forecast steps to zarr grid
+        if dataset_type == 'daily':
+            # For daily data, only keep values at daily intervals (multiples of 24 hours)
+            daily_steps = zarr_steps[zarr_steps.total_seconds() % (24*3600) == 0]
+            aligned_ds = processed_ds.reindex(
+                step=daily_steps,
+                method='nearest', 
+                tolerance=pd.Timedelta('12h')
+            )
+            # Then reindex to full 6-hourly grid with NaN for non-daily steps
+            aligned_ds = aligned_ds.reindex(step=zarr_steps)
+        else:
+            # For 6-hourly data, direct alignment
+            aligned_ds = processed_ds.reindex(step=zarr_steps)
+        
+        # Process each variable with memory management
+        chunk_size = 50  # Process 50 forecast steps at a time
+        
+        for var_name in aligned_ds.data_vars:
+            if var_name not in existing_ds.data_vars:
+                logger.warning(f"Variable {var_name} not found in zarr store, skipping")
+                continue
+                
+            logger.info(f"Appending {var_name} to time slice {time_idx}")
+            
+            var_data = aligned_ds[var_name]
+            
+            # Skip if all NaN
+            if var_data.isnull().all():
+                logger.info(f"Skipping {var_name} - all NaN")
+                continue
+            
+            # Process in step chunks to manage memory
+            n_steps = len(var_data.step)
+            for i in range(0, n_steps, chunk_size):
+                end_idx = min(i + chunk_size, n_steps)
+                
+                try:
+                    # Get chunk of data
+                    chunk_data = var_data.isel(step=slice(i, end_idx))
+                    
+                    # Skip if chunk is all NaN
+                    if chunk_data.isnull().all():
+                        continue
+                    
+                    # Write using region specification for this time and step range
+                    chunk_data.to_zarr(
+                        zarr_path,
+                        region={
+                            'time': slice(time_idx, time_idx + 1),
+                            'step': slice(i, end_idx)
+                        },
+                        mode='r+'
+                    )
+                    
+                except Exception as e:
+                    logger.error(f"Failed to write chunk {i}-{end_idx} for {var_name}: {e}")
+                    continue
+                
+                # Force garbage collection after each chunk
+                import gc
+                gc.collect()
+            
+            logger.info(f"Successfully appended {var_name}")
+
+
+    def process_grib_file_memory_efficient_multi_init(self, grib_path: str, 
+                                                     all_initial_times: List[pd.Timestamp],
+                                                     initialize_store: bool = False):
+        """Memory-efficient processing with proper CF convention structure"""
+        
+        logger.info(f"Processing {grib_path} (CF convention memory-efficient mode)")
+        
+        zarr_path = f'gs://{self.gcs_bucket}/{self.zarr_path}'
+        
+        # Load datasets using improved separation
+        datasets = self.load_grib_with_separation(grib_path)
+        
+        if not datasets:
+            logger.error(f"No datasets loaded from {grib_path}")
+            return
+        
+        # Extract initial time from first dataset or filename
+        first_ds = list(datasets.values())[0]
+        if 'time' in first_ds.coords:
+            initial_time = pd.Timestamp(first_ds.time.values)
+        else:
+            # Extract from filename
+            try:
+                parts = Path(grib_path).parts
+                if len(parts) >= 2 and parts[-2].isdigit():
+                    year = int(parts[-2])
+                    initial_time = pd.Timestamp(f'{year}-01-01')
+                else:
+                    initial_time = pd.Timestamp('1992-01-01')  # Default
+            except:
+                initial_time = pd.Timestamp('1992-01-01')
+        
+        logger.info(f"Extracted initialization time: {initial_time}")
+        
+        # Initialize store if needed (with ALL initialization times)
+        if initialize_store:
+            zarr_path = self.initialize_zarr_store_with_multi_init(first_ds, all_initial_times)
+        
+        # Process each dataset type with proper initialization time
+        for dataset_type, ds in datasets.items():
+            logger.info(f"Processing {dataset_type} dataset for time {initial_time}")
+            
+            try:
+                # Process with initialization time
+                if dataset_type == 'sixhourly':
+                    processed_ds = self._process_sixhourly_data(ds, initial_time)
+                else:
+                    processed_ds = self._process_daily_data(ds, initial_time)
+                
+                # Append to CF convention zarr store
+                self.append_to_multi_init_zarr(processed_ds, dataset_type, initial_time, zarr_path)
+                
+                # Clean up
+                del processed_ds
+                ds.close()
+                
+            except Exception as e:
+                logger.error(f"Failed to process {dataset_type} dataset: {e}")
+                ds.close()
+                continue
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
+        
+        logger.info(f"Completed processing {grib_path} for time {initial_time}")
+
+
+    def process_multiple_grib_files_with_multi_init(self, grib_files: List[str]):
+        """Process multiple GRIB files with proper CF convention structure"""
+        
+        logger.info(f"Processing {len(grib_files)} GRIB files with CF convention structure")
+        
+        # Step 1: Extract all initialization times from ALL files first
+        all_initial_times = []
+        
+        for grib_file in grib_files:
+            try:
+                # Load just to extract initial time
+                temp_datasets = self.load_grib_with_separation(grib_file)
+                if temp_datasets:
+                    first_ds = list(temp_datasets.values())[0]
+                    if 'time' in first_ds.coords:
+                        initial_time = pd.Timestamp(first_ds.time.values)
+                    else:
+                        # Extract from filename
+                        parts = Path(grib_file).parts
+                        if len(parts) >= 2 and parts[-2].isdigit():
+                            year = int(parts[-2])
+                            initial_time = pd.Timestamp(f'{year}-01-01')
+                        else:
+                            initial_time = pd.Timestamp('1992-01-01')
+                    
+                    all_initial_times.append(initial_time)
+                    logger.info(f"File {grib_file} -> Initial time: {initial_time}")
+                    
+                    # Close datasets
+                    for ds in temp_datasets.values():
+                        ds.close()
+                        
+            except Exception as e:
+                logger.error(f"Failed to extract initial time from {grib_file}: {e}")
+        
+        if not all_initial_times:
+            raise ValueError("No valid initial times found")
+        
+        # Remove duplicates and sort
+        unique_initial_times = sorted(list(set(all_initial_times)))
+        logger.info(f"Found {len(unique_initial_times)} unique initial times: {unique_initial_times}")
+        
+        # Step 2: Process each file with the complete initial_times list
+        for i, grib_file in enumerate(grib_files):
+            logger.info(f"Processing file {i+1}/{len(grib_files)}: {grib_file}")
+            
+            try:
+                self.process_grib_file_memory_efficient_multi_init(
+                    grib_file,
+                    unique_initial_times,  # Pass ALL initial times for proper zarr structure
+                    initialize_store=(i == 0)  # Initialize only on first file
+                )
+                
+            except Exception as e:
+                logger.error(f"Failed to process {grib_file}: {e}")
+                continue
+            
+            # Memory cleanup
+            import gc
+            gc.collect()
+        
+        logger.info("Completed processing all GRIB files with multi-init structure")
+        return f'gs://{self.gcs_bucket}/{self.zarr_path}'
+
 
 # Usage example and testing functions
 def diagnose_zarr_store(zarr_path: str):
@@ -723,3 +1097,7 @@ if __name__ == "__main__":
     
     # Then process all files
     # batch_process_grib_files()
+
+
+
+
