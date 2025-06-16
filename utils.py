@@ -7,10 +7,15 @@ from glob import glob
 from urllib.parse import urljoin, urlparse
 import psutil
 import math
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import asyncio
+import aiohttp
+import requests
+from functools import partial
+import threading
 
 import numpy as np
 import pandas as pd
-import requests
 import xarray as xr
 import rioxarray
 import xesmf as xe
@@ -22,8 +27,13 @@ import geopandas as gp
 from rasterio.features import rasterize
 from rasterio.transform import from_bounds
 
-from distributed import Client
+from distributed import Client, as_completed as dask_as_completed
 from dask.diagnostics import ProgressBar
+from dask import delayed
+import dask.array as da
+
+# Global lock for ESMF operations
+ESMF_LOCK = threading.Lock()
 
 ###############################################################################
 # GEFS-CHIRPS Processing Functions
@@ -280,7 +290,7 @@ def imerg_read_tiffs_to_dataset(folder_path, start_date, end_date):
     return combined_ds
 
 ###############################################################################
-# PET Processing Functions
+# PET Processing Functions - Parallelized
 ###############################################################################
 
 def pet_list_files_by_date(url, start_date, end_date):
@@ -389,6 +399,88 @@ def pet_bil_netcdf(file_url,date,output_dir,netcdf_dir):
        print(f"Converted {bil_path} to {nc_path}")
     return 'xds'  # Return the xarray dataset
 
+# New parallel download and processing functions
+
+def pet_download_extract_bilfile_parallel(file_url, output_dir):
+    """Parallel version of download and extract function."""
+    try:
+        response = requests.get(file_url, timeout=30)
+        response.raise_for_status()
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.tar.gz') as temp_file:
+            temp_file.write(response.content)
+            temp_file_path = temp_file.name
+
+        try:
+            with tarfile.open(temp_file_path, 'r:gz') as tar:
+                tar.extractall(path=output_dir)
+            return True
+        finally:
+            os.unlink(temp_file_path)
+    except Exception as e:
+        print(f"Error downloading/extracting {file_url}: {e}")
+        return False
+
+def pet_bil_netcdf_parallel(file_url, date, output_dir, netcdf_dir):
+    """Parallel version of BIL to NetCDF conversion."""
+    try:
+        filename = os.path.basename(file_url)
+        base_name = os.path.basename(filename)
+        file_name_without_extension = os.path.splitext(os.path.splitext(base_name)[0])[0] + '.bil'
+        bil_path = os.path.join(output_dir, file_name_without_extension)
+        
+        if not os.path.exists(netcdf_dir):
+            os.makedirs(netcdf_dir) 
+        
+        with rioxarray.open_rasterio(bil_path) as xds:
+            ncname = date.strftime('%Y%m%d')
+            nc_path = os.path.join(netcdf_dir, f"{ncname}.nc")
+            xds.to_netcdf(nc_path)
+            return True
+    except Exception as e:
+        print(f"Error converting {file_url} to NetCDF: {e}")
+        return False
+
+def process_single_pet_file(file_info, output_dir, netcdf_dir):
+    """Process a single PET file: download, extract, and convert to NetCDF."""
+    file_url, date = file_info
+    date_str = date.strftime('%Y%m%d')
+    nc_file = os.path.join(netcdf_dir, f"{date_str}.nc")
+    
+    # Skip if already exists
+    if os.path.exists(nc_file):
+        return True
+    
+    # Download and extract
+    if pet_download_extract_bilfile_parallel(file_url, output_dir):
+        # Convert to NetCDF
+        return pet_bil_netcdf_parallel(file_url, date, output_dir, netcdf_dir)
+    return False
+
+def pet_download_files_parallel(files_to_process, output_dir, netcdf_dir, max_workers=8):
+    """Download and process multiple PET files in parallel."""
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Create partial function with fixed arguments
+        process_func = partial(process_single_pet_file, output_dir=output_dir, netcdf_dir=netcdf_dir)
+        
+        # Submit all tasks
+        futures = {executor.submit(process_func, file_info): file_info for file_info in files_to_process}
+        
+        # Process results as they complete
+        completed = 0
+        total = len(files_to_process)
+        
+        for future in as_completed(futures):
+            file_info = futures[future]
+            try:
+                result = future.result()
+                completed += 1
+                if result:
+                    print(f"[{completed}/{total}] Successfully processed {file_info[1].strftime('%Y%m%d')}")
+                else:
+                    print(f"[{completed}/{total}] Failed to process {file_info[1].strftime('%Y%m%d')}")
+            except Exception as e:
+                print(f"[{completed}/{total}] Error processing {file_info[1].strftime('%Y%m%d')}: {e}")
 
 def pet_find_missing_dates(folder_path):
     # Get list of files in the folder
@@ -660,7 +752,7 @@ def process_zone_from_combined(master_shapefile, zone_name, km_str, pds):
     return z1crds, pz1ds, zone_extent
 
 ###############################################################################
-# Dask and Regridding Functions
+# Dask and Regridding Functions - Parallelized
 ###############################################################################
 
 def get_dask_client_params():
@@ -746,8 +838,52 @@ def regrid_dataset(input_ds, input_chunk_sizes, output_chunk_sizes, zone_extent,
 
     return result
 
+def regrid_dataset_parallel(input_ds, zone_extent, regrid_method="bilinear"):
+    """
+    Serial version of regrid_dataset to avoid ESMF parallel execution issues.
+    ESMF is not thread-safe and causes errors when run in parallel.
+    
+    Parameters:
+    ----------
+    input_ds : xarray.Dataset
+        The input dataset to be regridded.
+    zone_extent : dict
+        Dictionary containing lat/lon extents.
+    regrid_method : str
+        Method for regridding (default: "bilinear").
+        
+    Returns:
+    -------
+    xarray.Dataset
+        The regridded dataset.
+    """
+    # Use lock to ensure ESMF operations are serialized
+    with ESMF_LOCK:
+        # Extract lat/lon extents
+        z1lat_min = zone_extent['lat_min']
+        z1lat_max = zone_extent['lat_max']
+        z1lon_min = zone_extent['lon_min']
+        z1lon_max = zone_extent['lon_max']
+        
+        # Create output grid
+        ds_out = xr.Dataset({
+            "lat": (["lat"], np.arange(z1lat_min, z1lat_max, 0.01), {"units": "degrees_north"}),
+            "lon": (["lon"], np.arange(z1lon_min, z1lon_max, 0.01), {"units": "degrees_east"})
+        })
+        
+        # Create regridder (this must be done serially)
+        regridder = xe.Regridder(input_ds, ds_out, regrid_method, reuse_weights=True)
+        
+        # Apply regridding
+        regridded = regridder(input_ds, keep_attrs=True)
+        
+        # Clean up regridder to free memory
+        regridder.clean_weight_file()
+        
+        return regridded
+
 ###############################################################################
-# Data Aggregation and Output Functions
+# Data Aggregation and Output Functions - Parallelized
 ###############################################################################
 
 def zone_mean_df(input_ds, zone_ds):
@@ -788,11 +924,52 @@ def zone_mean_df(input_ds, zone_ds):
     maintaining consistency in spatial analyses where precise location alignment is necessary.
     """
     z1d_, aligned_zone_ds = xr.align(input_ds, zone_ds, join="override")
+    
+    # Load zone data to memory - this fixes the chunked array issue
+    aligned_zone_ds = aligned_zone_ds.load()
+    
     z1 = input_ds.groupby(aligned_zone_ds).mean()
     z1 = z1.to_dataframe()
     z1a = z1.reset_index()
     return z1a
 
+def zone_mean_df_parallel(input_ds, zone_ds):
+    """
+    Parallelized version of zone_mean_df using flox for efficient groupby operations.
+    
+    Parameters:
+    ----------
+    input_ds : xarray.Dataset
+        Input dataset with data to be averaged.
+    zone_ds : xarray.Dataset
+        Dataset with zone definitions.
+        
+    Returns:
+    -------
+    pandas.DataFrame
+        DataFrame with mean values for each zone.
+    """
+    # Align datasets
+    input_aligned, zone_aligned = xr.align(input_ds, zone_ds, join="override")
+    
+    # Ensure zone data is loaded to memory
+    zone_aligned = zone_aligned.load()
+    
+    # Use flox for efficient groupby mean calculation
+    # This is much faster than standard xarray groupby for large datasets
+    result = flox.xarray.xarray_reduce(
+        input_aligned,
+        zone_aligned,
+        func="mean",
+        expected_groups=np.unique(zone_aligned.values[~np.isnan(zone_aligned.values)]),
+        isbin=False
+    )
+    
+    # Convert to DataFrame
+    df = result.to_dataframe()
+    df = df.reset_index()
+    
+    return df
 
 def pet_update_input_data(z1a, zone_input_path, zone_str, start_date, end_date):
     """
