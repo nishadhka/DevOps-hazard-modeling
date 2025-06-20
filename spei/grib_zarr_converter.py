@@ -855,16 +855,21 @@ class GribToZarrConverter:
                     if chunk_data.isnull().all():
                         continue
                     
+                    chunk_data = chunk_data.expand_dims('time')
                     # Write using region specification for this time and step range
+                    # Drop coordinate variables that conflict with region writing
+                    #coords_to_drop = ['number', 'latitude', 'longitude']
+                    #chunk_data_clean = chunk_data.drop_vars([c for c in coords_to_drop if c in chunk_data.coords])
+
                     chunk_data.to_zarr(
                         zarr_path,
                         region={
                             'time': slice(time_idx, time_idx + 1),
                             'step': slice(i, end_idx)
                         },
-                        mode='r+'
-                    )
-                    
+                        mode='r+',
+                        consolidated=False
+                    )                    
                 except Exception as e:
                     logger.error(f"Failed to write chunk {i}-{end_idx} for {var_name}: {e}")
                     continue
