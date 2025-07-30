@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-Memory-Optimized Complete workflow v4: Download → Subset → Regrid → Icechunk
+Memory-Optimized Complete workflow v5: Tiled Regridding for Large Scale Processing
 Features:
-- FIXED subsetting logic to avoid division by zero errors
-- SUBSET FIRST, then regrid (much more memory efficient!)
-- Robust coordinate handling for different data sources
-- Optimized for machines with limited RAM (4-8 GB)
+- 10-degree tiled regridding to handle memory constraints with 1km resolution
+- Download → Plot → Tile-based regridding → Concatenate → Icechunk
+- Cartopy-based plotting for visualization and verification
+- Test mode using existing 20250722 data with 10km resolution
+- Progressive tile processing with memory cleanup
 
 Usage:
-  python create_regridded_icechunk_memory_optimized_v4.py                  # Download + regrid
-  python create_regridded_icechunk_memory_optimized_v4.py --skip-download  # Only regrid existing data
+  python create_regridded_icechunk_memory_optimized_v5.py                        # Download + full workflow
+  python create_regridded_icechunk_memory_optimized_v5.py --skip-download        # Skip download
+  python create_regridded_icechunk_memory_optimized_v5.py --test-mode            # Test with existing data
+  python create_regridded_icechunk_memory_optimized_v5.py --test-mode --plot-only # Test plotting only
 """
 
 import sys
@@ -19,6 +22,7 @@ import shutil
 import gc
 from datetime import datetime
 from pathlib import Path
+import math
 
 # Add current directory to path
 sys.path.append('/home/runner/workspace')
@@ -28,6 +32,10 @@ import xarray as xr
 import icechunk
 import rioxarray
 import xesmf as xe
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
 
 # Import download functions
 from download_pet_imerg_chirpsgefs import (download_pet_data,
@@ -38,37 +46,125 @@ from download_pet_imerg_chirpsgefs import (download_pet_data,
 def setup_config(target_date,
                  lat_bounds=(-12.0, 24.2),
                  lon_bounds=(22.9, 51.6),
-                 resolution=0.01):
-    """Setup configuration for processing"""
+                 resolution=0.01,
+                 tile_size=10.0,
+                 test_mode=False):
+    """Setup configuration for tiled processing"""
     config = {
         'TARGET_DATE': target_date,
         'LAT_BOUNDS': lat_bounds,
         'LON_BOUNDS': lon_bounds,
         'TARGET_RESOLUTION': resolution,
+        'TILE_SIZE': tile_size,  # degrees
+        'TEST_MODE': test_mode,
         'OUTPUT_DIR': f"./{target_date.strftime('%Y%m%d')}",
-        'ICECHUNK_PATH':
-        f"./east_africa_regridded_{target_date.strftime('%Y%m%d')}.zarr",
-        'WEIGHTS_DIR': "./regridder_weights_regional"
+        'ICECHUNK_PATH': f"./east_africa_regridded_{target_date.strftime('%Y%m%d')}.zarr",
+        'WEIGHTS_DIR': "./regridder_weights_tiled",
+        'PLOTS_DIR': f"./plots_{target_date.strftime('%Y%m%d')}",
+        'TILES_DIR': f"./tiles_{target_date.strftime('%Y%m%d')}"
     }
 
-    # Create weights directory if it doesn't exist
-    os.makedirs(config['WEIGHTS_DIR'], exist_ok=True)
+    # Create directories
+    for dir_key in ['WEIGHTS_DIR', 'PLOTS_DIR', 'TILES_DIR']:
+        os.makedirs(config[dir_key], exist_ok=True)
 
-    # Update the download script configuration
-    import download_pet_imerg_chirpsgefs
-    download_pet_imerg_chirpsgefs.TARGET_DATE = target_date
-    download_pet_imerg_chirpsgefs.LAT_BOUNDS = lat_bounds
-    download_pet_imerg_chirpsgefs.LON_BOUNDS = lon_bounds
-    download_pet_imerg_chirpsgefs.OUTPUT_DIR = config['OUTPUT_DIR']
+    # Update the download script configuration if not in test mode
+    if not test_mode:
+        import download_pet_imerg_chirpsgefs
+        download_pet_imerg_chirpsgefs.TARGET_DATE = target_date
+        download_pet_imerg_chirpsgefs.LAT_BOUNDS = lat_bounds
+        download_pet_imerg_chirpsgefs.LON_BOUNDS = lon_bounds
+        download_pet_imerg_chirpsgefs.OUTPUT_DIR = config['OUTPUT_DIR']
 
     return config
 
 
-def create_target_grid(config):
-    """Create target grid for regridding"""
-    lat_min, lat_max = config['LAT_BOUNDS']
-    lon_min, lon_max = config['LON_BOUNDS']
-    resolution = config['TARGET_RESOLUTION']
+def create_tile_bounds(lat_bounds, lon_bounds, tile_size):
+    """Create list of tile bounds for processing"""
+    lat_min, lat_max = lat_bounds
+    lon_min, lon_max = lon_bounds
+
+    # Calculate number of tiles needed
+    lat_tiles = math.ceil((lat_max - lat_min) / tile_size)
+    lon_tiles = math.ceil((lon_max - lon_min) / tile_size)
+
+    tiles = []
+
+    for i in range(lat_tiles):
+        for j in range(lon_tiles):
+            tile_lat_min = lat_min + i * tile_size
+            tile_lat_max = min(lat_min + (i + 1) * tile_size, lat_max)
+            tile_lon_min = lon_min + j * tile_size
+            tile_lon_max = min(lon_min + (j + 1) * tile_size, lon_max)
+
+            tiles.append({
+                'id': f"tile_{i:02d}_{j:02d}",
+                'lat_bounds': (tile_lat_min, tile_lat_max),
+                'lon_bounds': (tile_lon_min, tile_lon_max),
+                'i': i, 'j': j
+            })
+
+    print(f"🧩 Created {len(tiles)} tiles ({lat_tiles}x{lon_tiles}) of {tile_size}° each")
+    return tiles
+
+
+def plot_data_with_cartopy(data, title, output_path, bounds=None, vmin=None, vmax=None):
+    """Plot data using cartopy with East Africa focus"""
+    plt.figure(figsize=(12, 10))
+
+    # Create map projection
+    ax = plt.axes(projection=ccrs.PlateCarree())
+
+    # Set extent for East Africa
+    if bounds:
+        ax.set_extent([bounds[2], bounds[3], bounds[0], bounds[1]], crs=ccrs.PlateCarree())
+    else:
+        ax.set_extent([22, 52, -12, 25], crs=ccrs.PlateCarree())
+
+    # Add map features
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.5)
+    ax.add_feature(cfeature.BORDERS, linewidth=0.5)
+    ax.add_feature(cfeature.OCEAN, color='lightblue', alpha=0.5)
+    ax.add_feature(cfeature.LAND, color='lightgray', alpha=0.3)
+
+    # Add gridlines
+    gl = ax.gridlines(draw_labels=True, linewidth=0.5, alpha=0.5)
+    gl.top_labels = False
+    gl.right_labels = False
+    gl.xformatter = LongitudeFormatter()
+    gl.yformatter = LatitudeFormatter()
+
+    # Plot data
+    if isinstance(data, xr.DataArray):
+        # Handle time dimension if present
+        if 'time' in data.dims:
+            data_to_plot = data.isel(time=0)  # Plot first time step
+        else:
+            data_to_plot = data
+
+        im = data_to_plot.plot(ax=ax, transform=ccrs.PlateCarree(),
+                              add_colorbar=False, vmin=vmin, vmax=vmax)
+
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax, orientation='vertical',
+                           shrink=0.8, aspect=20)
+        if hasattr(data, 'units'):
+            cbar.set_label(f"{data.long_name} ({data.units})")
+        else:
+            cbar.set_label(title)
+
+    plt.title(title, fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+    print(f"   📊 Plot saved: {output_path}")
+
+
+def create_target_grid_for_tile(tile_bounds, resolution):
+    """Create target grid for a specific tile"""
+    lat_min, lat_max = tile_bounds['lat_bounds']
+    lon_min, lon_max = tile_bounds['lon_bounds']
 
     lat_points = int((lat_max - lat_min) / resolution) + 1
     lon_points = int((lon_max - lon_min) / resolution) + 1
@@ -81,23 +177,13 @@ def create_target_grid(config):
         'lon': (['lon'], lon),
     })
 
-    grid_points = lat_points * lon_points
-    memory_per_layer = grid_points * 4 / (1024**2)  # MB
-
-    print(
-        f"🗺️ Regional target grid: {lat_points} x {lon_points} = {grid_points:,} points"
-    )
-    print(f"💾 Memory per layer: {memory_per_layer:.1f} MB")
-
     return target_grid
 
 
-def subset_to_region_robust(ds, lat_bounds, lon_bounds, buffer_deg=2.0):
-    """
-    Robust subsetting that handles different coordinate systems and edge cases
-    """
-    lat_min, lat_max = lat_bounds
-    lon_min, lon_max = lon_bounds
+def subset_to_tile_robust(ds, tile_bounds, buffer_deg=1.0):
+    """Subset dataset to tile with buffer"""
+    lat_min, lat_max = tile_bounds['lat_bounds']
+    lon_min, lon_max = tile_bounds['lon_bounds']
 
     # Add buffer
     lat_min_buf = lat_min - buffer_deg
@@ -105,38 +191,18 @@ def subset_to_region_robust(ds, lat_bounds, lon_bounds, buffer_deg=2.0):
     lon_min_buf = lon_min - buffer_deg
     lon_max_buf = lon_max + buffer_deg
 
-    print(f"   📐 Robust subsetting with {buffer_deg}° buffer:")
-    print(
-        f"      Target region: {lat_min}° to {lat_max}°N, {lon_min}° to {lon_max}°E"
-    )
-    print(
-        f"      Buffered region: {lat_min_buf}° to {lat_max_buf}°N, {lon_min_buf}° to {lon_max_buf}°E"
-    )
-
     try:
         # Get coordinate information
         lat_coord = ds.lat
         lon_coord = ds.lon
 
-        print(f"      Source grid: {len(lat_coord)} x {len(lon_coord)} points")
-        print(
-            f"      Lat range: {float(lat_coord.min()):.1f}° to {float(lat_coord.max()):.1f}°"
-        )
-        print(
-            f"      Lon range: {float(lon_coord.min()):.1f}° to {float(lon_coord.max()):.1f}°"
-        )
-
         # Check coordinate order and fix if needed
         if lat_coord[0] > lat_coord[-1]:
-            print(
-                f"      🔄 Flipping latitude coordinate (descending → ascending)"
-            )
             ds = ds.isel(lat=slice(None, None, -1))
             lat_coord = ds.lat
 
-        # Ensure longitude is in -180 to 180 range if needed
+        # Ensure longitude is in correct range
         if float(lon_coord.max()) > 180:
-            print(f"      🔄 Converting longitude from 0-360 to -180-180")
             ds = ds.assign_coords(lon=(ds.lon + 180) % 360 - 180)
             ds = ds.sortby('lon')
             lon_coord = ds.lon
@@ -145,178 +211,235 @@ def subset_to_region_robust(ds, lat_bounds, lon_bounds, buffer_deg=2.0):
         lat_mask = (lat_coord >= lat_min_buf) & (lat_coord <= lat_max_buf)
         lon_mask = (lon_coord >= lon_min_buf) & (lon_coord <= lon_max_buf)
 
-        # Check if we have any points in the region
         lat_indices = np.where(lat_mask)[0]
         lon_indices = np.where(lon_mask)[0]
 
         if len(lat_indices) == 0 or len(lon_indices) == 0:
-            print(
-                f"      ⚠️ No points found in target region, using full dataset"
-            )
-            return ds
+            return None  # No data in this tile
 
-        # Apply subsetting using isel (index-based selection)
+        # Apply subsetting
         lat_start, lat_end = lat_indices[0], lat_indices[-1] + 1
         lon_start, lon_end = lon_indices[0], lon_indices[-1] + 1
 
         ds_subset = ds.isel(lat=slice(lat_start, lat_end),
-                            lon=slice(lon_start, lon_end))
-
-        # Verify the subset
-        subset_lat_min = float(ds_subset.lat.min())
-        subset_lat_max = float(ds_subset.lat.max())
-        subset_lon_min = float(ds_subset.lon.min())
-        subset_lon_max = float(ds_subset.lon.max())
-
-        print(
-            f"      ✅ Subset result: {len(ds_subset.lat)} x {len(ds_subset.lon)} points"
-        )
-        print(
-            f"      Subset bounds: {subset_lat_min:.1f}° to {subset_lat_max:.1f}°N, {subset_lon_min:.1f}° to {subset_lon_max:.1f}°E"
-        )
-
-        # Calculate reduction factor
-        original_size = len(ds.lat) * len(ds.lon)
-        subset_size = len(ds_subset.lat) * len(ds_subset.lon)
-        if subset_size > 0:
-            reduction_factor = original_size / subset_size
-            print(
-                f"      🎯 Size reduction: {original_size:,} → {subset_size:,} points ({reduction_factor:.1f}x smaller)"
-            )
+                           lon=slice(lon_start, lon_end))
 
         return ds_subset
 
     except Exception as e:
-        print(f"      ❌ Robust subset failed: {e}")
-        print(f"      🔄 Using full dataset as fallback")
-        return ds
-
-
-def get_or_create_regridder(source_ds,
-                            target_grid,
-                            method='bilinear',
-                            weights_dir="./regridder_weights_regional"):
-    """Get cached regridder or create new one for regional grids"""
-
-    # Create a unique identifier
-    source_shape = f"{len(source_ds.lat)}x{len(source_ds.lon)}"
-    target_shape = f"{len(target_grid.lat)}x{len(target_grid.lon)}"
-
-    # Get bounds for identification
-    source_lat_range = f"{float(source_ds.lat.min()):.1f}to{float(source_ds.lat.max()):.1f}"
-    source_lon_range = f"{float(source_ds.lon.min()):.1f}to{float(source_ds.lon.max()):.1f}"
-    target_lat_range = f"{float(target_grid.lat.min()):.1f}to{float(target_grid.lat.max()):.1f}"
-    target_lon_range = f"{float(target_grid.lon.min()):.1f}to{float(target_grid.lon.max()):.1f}"
-
-    weight_filename = f"regional_{method}_{source_shape}_{source_lat_range}_{source_lon_range}_to_{target_shape}_{target_lat_range}_{target_lon_range}.nc"
-    weight_path = os.path.join(weights_dir, weight_filename)
-
-    # Check if weights already exist
-    if os.path.exists(weight_path):
-        print(
-            f"   🔄 Loading cached regional weights ({os.path.getsize(weight_path) / (1024**2):.1f} MB)"
-        )
-
-        try:
-            regridder = xe.Regridder(source_ds,
-                                     target_grid,
-                                     method,
-                                     weights=weight_path)
-            print(f"   ✅ Loaded cached regridder in ~33ms")
-            return regridder
-        except Exception as e:
-            print(f"   ⚠️ Failed to load cached weights: {e}")
-
-    # Create new regridder
-    print(f"   🔧 Creating new regional regridder...")
-    print(
-        f"   📊 Source: {len(source_ds.lat)} x {len(source_ds.lon)} → Target: {len(target_grid.lat)} x {len(target_grid.lon)}"
-    )
-
-    start_time = time.time()
-    regridder = xe.Regridder(source_ds, target_grid, method)
-    creation_time = time.time() - start_time
-
-    # Save weights
-    try:
-        saved_path = regridder.to_netcdf(weight_path)
-        weight_size = os.path.getsize(weight_path) / (1024**2)
-        print(f"   💾 Saved regional weights ({weight_size:.1f} MB)")
-        print(f"   ⏱️ Creation time: {creation_time:.1f}s")
-    except Exception as e:
-        print(f"   ⚠️ Failed to save weights: {e}")
-
-    return regridder
-
-
-def check_memory():
-    """Check available memory"""
-    try:
-        with open('/proc/meminfo', 'r') as f:
-            for line in f:
-                if 'MemAvailable' in line:
-                    available_kb = int(line.split()[1])
-                    available_mb = available_kb / 1024
-                    available_gb = available_mb / 1024
-                    print(
-                        f"💾 Available memory: {available_mb:.0f} MB ({available_gb:.1f} GB)"
-                    )
-                    return available_mb
-    except:
-        print("💾 Could not determine available memory")
+        print(f"      ⚠ Tile subset failed: {e}")
         return None
 
 
 def download_all_data(config):
     """Download all three data sources"""
-    print("📥 Downloading all data sources...")
+    print("📥 Downloading climate data...")
+    
+    try:
+        # Download PET data
+        print("   🌡 Downloading PET data...")
+        pet_success = download_pet_data()
+        
+        # Download IMERG data  
+        print("   🛰 Downloading IMERG data...")
+        imerg_success = download_imerg_data()
+        
+        # Download CHIRPS-GEFS data
+        print("   🌧 Downloading CHIRPS-GEFS data...")
+        chirps_success = download_chirps_gefs_data()
+        
+        results = {
+            'pet': pet_success,
+            'imerg': imerg_success, 
+            'chirps': chirps_success
+        }
+        
+        total_success = sum([pet_success, imerg_success, chirps_success])
+        print(f"   ✅ Download complete: {total_success}/3 sources successful")
+        
+        return results
+        
+    except Exception as e:
+        print(f"   ❌ Download failed: {e}")
+        return {'pet': False, 'imerg': False, 'chirps': False}
 
-    os.makedirs(config['OUTPUT_DIR'], exist_ok=True)
 
-    # Download each source
-    pet_success = download_pet_data()
-    imerg_success = download_imerg_data()
-    chirps_success = download_chirps_gefs_data()
+def load_and_plot_original_data(config):
+    """Load and plot original downloaded data for visualization"""
+    print("📊 Loading and plotting original data...")
 
-    return {
-        'pet': pet_success,
-        'imerg': imerg_success,
-        'chirps': chirps_success
-    }
+    plots_created = []
+
+    # Plot PET data
+    try:
+        if config['TEST_MODE']:
+            pet_dir = os.path.join(config['OUTPUT_DIR'], 'pet_data')
+        else:
+            pet_dir = os.path.join(config['OUTPUT_DIR'], 'pet_data')
+
+        bil_files = list(Path(pet_dir).glob('*.bil'))
+        if bil_files:
+            print("   🌡 Plotting PET data...")
+
+            # Load PET file (simplified version for plotting)
+            bil_file = bil_files[0]
+            with open(bil_file, 'rb') as f:
+                data = np.frombuffer(f.read(), dtype=np.float32)
+
+            # Determine dimensions (simplified)
+            file_size = len(data)
+            if file_size == 181 * 360:
+                height, width = 181, 360
+            elif file_size == 361 * 720:
+                height, width = 361, 720
+            elif file_size == 721 * 1440:
+                height, width = 721, 1440
+            else:
+                height = int(np.sqrt(file_size))
+                width = file_size // height
+
+            data = data.reshape(height, width)
+            data = np.where(data < -9000, np.nan, data)
+
+            # Create coordinates
+            lat_step = 180.0 / height
+            lon_step = 360.0 / width
+            lat = np.linspace(90 - lat_step / 2, -90 + lat_step / 2, height)
+            lon = np.linspace(-180 + lon_step / 2, 180 - lon_step / 2, width)
+
+            pet_da = xr.DataArray(data, coords=[lat, lon], dims=['lat', 'lon'])
+            pet_da.attrs = {'long_name': 'Potential Evapotranspiration', 'units': 'mm/day'}
+
+            # Subset to East Africa for plotting
+            pet_ea = pet_da.sel(lat=slice(25, -12), lon=slice(22, 52))
+
+            plot_path = os.path.join(config['PLOTS_DIR'], 'original_pet_data.png')
+            plot_data_with_cartopy(pet_ea, 'Original PET Data', plot_path,
+                                 bounds=config['LAT_BOUNDS'] + config['LON_BOUNDS'])
+            plots_created.append(plot_path)
+    except Exception as e:
+        print(f"   ⚠ PET plotting failed: {e}")
+
+    # Plot IMERG data
+    try:
+        if config['TEST_MODE']:
+            imerg_dir = os.path.join(config['OUTPUT_DIR'], 'imerg_data')
+        else:
+            imerg_dir = os.path.join(config['OUTPUT_DIR'], 'imerg_data')
+
+        tiff_files = list(Path(imerg_dir).glob('*.tif'))
+        if tiff_files:
+            print("   🛰 Plotting IMERG data...")
+
+            tiff_file = tiff_files[0]
+            ds = rioxarray.open_rasterio(tiff_file)
+            ds = ds.squeeze('band').drop('band')
+
+            if 'x' in ds.dims:
+                ds = ds.rename({'x': 'lon', 'y': 'lat'})
+
+            ds.attrs = {'long_name': 'Precipitation Rate', 'units': 'mm/day'}
+
+            plot_path = os.path.join(config['PLOTS_DIR'], 'original_imerg_data.png')
+            plot_data_with_cartopy(ds, 'Original IMERG Data', plot_path,
+                                 bounds=config['LAT_BOUNDS'] + config['LON_BOUNDS'])
+            plots_created.append(plot_path)
+    except Exception as e:
+        print(f"   ⚠ IMERG plotting failed: {e}")
+
+    # Plot CHIRPS data
+    try:
+        if config['TEST_MODE']:
+            chirps_dir = os.path.join(config['OUTPUT_DIR'], 'chirps_gefs_data')
+        else:
+            chirps_dir = os.path.join(config['OUTPUT_DIR'], 'chirps_gefs_data')
+
+        nc_files = list(Path(chirps_dir).glob('*.nc'))
+        if nc_files:
+            print("   🌧 Plotting CHIRPS-GEFS data...")
+
+            nc_file = nc_files[0]
+            ds = xr.open_dataset(nc_file)
+
+            # Rename coordinates if needed
+            if 'y' in ds.dims and 'lat' not in ds.dims:
+                ds = ds.rename({'y': 'lat', 'x': 'lon'})
+
+            # Find precipitation variable
+            precip_vars = [var for var in ds.data_vars if 'precip' in var.lower()]
+            if precip_vars:
+                precip_var = precip_vars[0]
+                ds[precip_var].attrs = {'long_name': 'Precipitation Forecast', 'units': 'mm/day'}
+
+                plot_path = os.path.join(config['PLOTS_DIR'], 'original_chirps_data.png')
+                plot_data_with_cartopy(ds[precip_var], 'Original CHIRPS-GEFS Data', plot_path,
+                                     bounds=config['LAT_BOUNDS'] + config['LON_BOUNDS'])
+                plots_created.append(plot_path)
+    except Exception as e:
+        print(f"   ⚠ CHIRPS plotting failed: {e}")
+
+    print(f"   ✅ Created {len(plots_created)} original data plots")
+    return plots_created
 
 
-def load_and_regrid_pet_regional(config, target_grid):
-    """Regional PET processing with robust subsetting"""
-    print("🌡️ Processing PET data (regional subset + regrid)...")
+def process_tile_regridding(config, tile, source_data, target_resolution, data_type):
+    """Process regridding for a single tile"""
+    print(f"   🧩 Processing {tile['id']} for {data_type}...")
 
-    check_memory()
-
-    pet_dir = os.path.join(config['OUTPUT_DIR'], 'pet_data')
-    bil_files = list(Path(pet_dir).glob('*.bil'))
-
-    if not bil_files:
-        print("   ❌ No PET files found")
+    # Subset data to tile
+    tile_data = subset_to_tile_robust(source_data, tile, buffer_deg=1.0)
+    if tile_data is None:
+        print(f"      ⚠ No data in tile {tile['id']}")
         return None
 
-    bil_file = bil_files[0]
+    # Create target grid for tile
+    target_grid = create_target_grid_for_tile(tile, target_resolution)
+
+    # Create regridder
+    try:
+        regridder = xe.Regridder(tile_data, target_grid, 'bilinear')
+
+        # Apply regridding
+        regridded_tile = regridder(tile_data)
+
+        # Clean up
+        del regridder, tile_data
+        gc.collect()
+
+        # Save tile
+        tile_path = os.path.join(config['TILES_DIR'], f"{data_type}_{tile['id']}.zarr")
+        regridded_tile.to_zarr(tile_path, mode='w')
+
+        print(f"      ✅ Tile {tile['id']} processed and saved")
+        return tile_path
+
+    except Exception as e:
+        print(f"      ❌ Tile {tile['id']} processing failed: {e}")
+        return None
+
+
+def load_and_regrid_pet_tiled(config, tiles):
+    """Process PET data using tiled approach"""
+    print("🌡 Processing PET data with tiled regridding...")
+
+    if config['TEST_MODE']:
+        pet_dir = os.path.join(config['OUTPUT_DIR'], 'pet_data')
+    else:
+        pet_dir = os.path.join(config['OUTPUT_DIR'], 'pet_data')
+
+    bil_files = list(Path(pet_dir).glob('*.bil'))
+    if not bil_files:
+        print("   ❌ No PET files found")
+        return []
 
     try:
-        # Load BIL file
+        # Load global PET data (same as v4)
+        bil_file = bil_files[0]
         with open(bil_file, 'rb') as f:
             data = np.frombuffer(f.read(), dtype=np.float32)
 
         file_size = len(data)
-        print(
-            f"   📊 File size: {file_size} values ({file_size * 4 / (1024**2):.1f} MB)"
-        )
-
-        # Determine dimensions
-        possible_dims = [
-            (181, 360),  # 1° global
-            (361, 720),  # 0.5° global
-            (721, 1440),  # 0.25° global
-            (1801, 3600),  # 0.1° global
-        ]
+        possible_dims = [(181, 360), (361, 720), (721, 1440), (1801, 3600), (181, 180)]
 
         height, width = None, None
         for h, w in possible_dims:
@@ -325,31 +448,38 @@ def load_and_regrid_pet_regional(config, target_grid):
                 break
 
         if height is None:
-            for i in range(100, int(np.sqrt(file_size)) + 1):
-                if file_size % i == 0:
-                    height, width = i, file_size // i
-                    break
-
+            # Try to infer dimensions from square root
+            sqrt_size = int(np.sqrt(file_size))
+            if sqrt_size * sqrt_size == file_size:
+                height, width = sqrt_size, sqrt_size
+            elif sqrt_size * (sqrt_size + 1) == file_size:
+                height, width = sqrt_size, sqrt_size + 1
+            elif (sqrt_size + 1) * sqrt_size == file_size:
+                height, width = sqrt_size + 1, sqrt_size
+            else:
+                # Try common ratios
+                for ratio in [2, 1.5, 0.5]:
+                    w = int(sqrt_size * ratio)
+                    h = file_size // w
+                    if h * w == file_size:
+                        height, width = h, w
+                        break
+        
         if height is None:
-            print(f"   ❌ Cannot determine dimensions for {file_size} values")
-            return None
+            print(f"   ❌ Cannot determine PET dimensions for size {file_size}")
+            return []
 
         data = data.reshape(height, width)
         data = np.where(data < -9000, np.nan, data)
 
-        # Create coordinates (global grid)
+        # Create coordinates
         lat_step = 180.0 / height
         lon_step = 360.0 / width
         lat_global = np.linspace(90 - lat_step / 2, -90 + lat_step / 2, height)
-        lon_global = np.linspace(-180 + lon_step / 2, 180 - lon_step / 2,
-                                 width)
+        lon_global = np.linspace(-180 + lon_step / 2, 180 - lon_step / 2, width)
 
-        # Create full global dataset
         pet_ds_global = xr.Dataset({'pet': (['lat', 'lon'], data)},
-                                   coords={
-                                       'lat': lat_global,
-                                       'lon': lon_global
-                                   })
+                                  coords={'lat': lat_global, 'lon': lon_global})
 
         pet_ds_global.pet.attrs = {
             'long_name': 'potential_evapotranspiration',
@@ -357,73 +487,50 @@ def load_and_regrid_pet_regional(config, target_grid):
             'source': 'USGS FEWS NET'
         }
 
-        # ROBUST subsetting
-        print("   🎯 Subsetting PET to East Africa region...")
-        pet_ds_regional = subset_to_region_robust(pet_ds_global,
-                                                  config['LAT_BOUNDS'],
-                                                  config['LON_BOUNDS'],
-                                                  buffer_deg=2.0)
+        # Process each tile
+        tile_paths = []
+        for tile in tiles:
+            tile_path = process_tile_regridding(config, tile, pet_ds_global,
+                                              config['TARGET_RESOLUTION'], 'pet')
+            if tile_path:
+                tile_paths.append(tile_path)
 
-        # Clean up global dataset
+        # Clean up global data
         del pet_ds_global, data
         gc.collect()
 
-        print("   🔄 Starting regional regridding...")
-
-        # Create regridder for regional data
-        regridder = get_or_create_regridder(pet_ds_regional, target_grid,
-                                            'bilinear', config['WEIGHTS_DIR'])
-
-        # Apply regridding
-        pet_regridded = regridder(pet_ds_regional)
-
-        # Clean up
-        del regridder, pet_ds_regional
-        gc.collect()
-
-        # Final subset to exact region
-        pet_regridded = pet_regridded.sel(lat=slice(config['LAT_BOUNDS'][0],
-                                                    config['LAT_BOUNDS'][1]),
-                                          lon=slice(config['LON_BOUNDS'][0],
-                                                    config['LON_BOUNDS'][1]))
-
-        print(f"   ✅ PET regridded: {pet_regridded.pet.shape}")
-        print(f"   💾 Memory after PET: {check_memory():.0f} MB available")
-
-        return pet_regridded
+        return tile_paths
 
     except Exception as e:
-        print(f"   ❌ PET processing failed: {e}")
-        import traceback
-        traceback.print_exc()
-        gc.collect()
-        return None
+        print(f"   ❌ PET tiled processing failed: {e}")
+        return []
 
 
-def load_and_regrid_imerg_regional(config, target_grid):
-    """Regional IMERG processing with robust subsetting"""
-    print("🛰️ Processing IMERG data (regional subset + regrid)...")
+def load_and_regrid_imerg_tiled(config, tiles):
+    """Process IMERG data using tiled approach"""
+    print("🛰 Processing IMERG data with tiled regridding...")
 
-    check_memory()
+    if config['TEST_MODE']:
+        imerg_dir = os.path.join(config['OUTPUT_DIR'], 'imerg_data')
+    else:
+        imerg_dir = os.path.join(config['OUTPUT_DIR'], 'imerg_data')
 
-    imerg_dir = os.path.join(config['OUTPUT_DIR'], 'imerg_data')
     tiff_files = list(Path(imerg_dir).glob('*.tif'))
-
     if not tiff_files:
         print("   ❌ No IMERG files found")
-        return None
-
-    print(f"   📊 Processing {len(tiff_files)} IMERG files")
+        return []
 
     try:
-        regional_datasets = []
+        # Load and combine IMERG files
+        datasets = []
+        for tiff_file in sorted(tiff_files)[:3]:  # Limit for memory
+            ds = rioxarray.open_rasterio(tiff_file)
+            ds = ds.squeeze('band').drop('band')
 
-        for i, tiff_file in enumerate(sorted(tiff_files)):
-            print(
-                f"   🔄 Processing file {i+1}/{len(tiff_files)}: {tiff_file.name}"
-            )
+            if 'x' in ds.dims:
+                ds = ds.rename({'x': 'lon', 'y': 'lat'})
 
-            # Extract date
+            # Add time dimension
             filename = os.path.basename(tiff_file)
             try:
                 date_str = filename.split('.')[3][:8]
@@ -431,48 +538,19 @@ def load_and_regrid_imerg_regional(config, target_grid):
             except:
                 file_date = datetime.fromtimestamp(os.path.getmtime(tiff_file))
 
-            # Load file
-            ds = rioxarray.open_rasterio(tiff_file)
-            ds = ds.squeeze('band').drop('band')
-
-            if 'x' in ds.dims:
-                ds = ds.rename({'x': 'lon', 'y': 'lat'})
-
             ds = ds.expand_dims('time')
             ds = ds.assign_coords(time=[file_date])
+            datasets.append(ds)
 
-            # ROBUST subsetting
-            print(f"      🎯 Subsetting IMERG file to region...")
-            ds_regional = subset_to_region_robust(ds,
-                                                  config['LAT_BOUNDS'],
-                                                  config['LON_BOUNDS'],
-                                                  buffer_deg=2.0)
+        # Combine datasets
+        imerg_combined = xr.concat(datasets, dim='time')
 
-            regional_datasets.append(ds_regional)
-
-            # Clean up original dataset
-            del ds
-            gc.collect()
-
-        # Combine regional datasets
-        print("   🔗 Combining regional IMERG datasets...")
-        imerg_combined = xr.concat(regional_datasets, dim='time')
-
-        # Clean up individual datasets
-        del regional_datasets
-        gc.collect()
-
-        # Handle variable naming
-        if hasattr(imerg_combined, 'data_vars') and len(
-                imerg_combined.data_vars) > 0:
+        # Rename to precipitation
+        if hasattr(imerg_combined, 'data_vars') and len(imerg_combined.data_vars) > 0:
             data_var = list(imerg_combined.data_vars)[0]
             imerg_combined = imerg_combined.rename({data_var: 'precipitation'})
         else:
-            if hasattr(imerg_combined, 'name'):
-                if imerg_combined.name != 'precipitation':
-                    imerg_combined.name = 'precipitation'
-            else:
-                imerg_combined.name = 'precipitation'
+            imerg_combined.name = 'precipitation'
             imerg_combined = imerg_combined.to_dataset()
 
         imerg_combined.precipitation.attrs = {
@@ -481,168 +559,83 @@ def load_and_regrid_imerg_regional(config, target_grid):
             'source': 'NASA IMERG'
         }
 
-        print("   🔄 Starting regional regridding...")
-
-        # Create regridder for regional data
-        regridder = get_or_create_regridder(imerg_combined, target_grid,
-                                            'bilinear', config['WEIGHTS_DIR'])
-
-        # Apply regridding
-        imerg_regridded = regridder(imerg_combined)
+        # Process each tile
+        tile_paths = []
+        for tile in tiles:
+            tile_path = process_tile_regridding(config, tile, imerg_combined,
+                                              config['TARGET_RESOLUTION'], 'imerg')
+            if tile_path:
+                tile_paths.append(tile_path)
 
         # Clean up
-        del regridder, imerg_combined
+        del imerg_combined, datasets
         gc.collect()
 
-        # Final subset to exact region
-        imerg_regridded = imerg_regridded.sel(
-            lat=slice(config['LAT_BOUNDS'][0], config['LAT_BOUNDS'][1]),
-            lon=slice(config['LON_BOUNDS'][0], config['LON_BOUNDS'][1]))
-
-        print(f"   ✅ IMERG regridded: {imerg_regridded.precipitation.shape}")
-        print(f"   💾 Memory after IMERG: {check_memory():.0f} MB available")
-
-        return imerg_regridded
+        return tile_paths
 
     except Exception as e:
-        print(f"   ❌ IMERG processing failed: {e}")
-        import traceback
-        traceback.print_exc()
-        gc.collect()
-        return None
+        print(f"   ❌ IMERG tiled processing failed: {e}")
+        return []
 
 
-def load_and_regrid_chirps_regional(config, target_grid):
-    """Regional CHIRPS-GEFS processing with robust subsetting"""
-    print("🌧️ Processing CHIRPS-GEFS data (regional subset + regrid)...")
+def load_and_regrid_chirps_tiled(config, tiles):
+    """Process CHIRPS-GEFS data using tiled approach"""
+    print("🌧 Processing CHIRPS-GEFS data with tiled regridding...")
 
-    check_memory()
+    if config['TEST_MODE']:
+        chirps_dir = os.path.join(config['OUTPUT_DIR'], 'chirps_gefs_data')
+    else:
+        chirps_dir = os.path.join(config['OUTPUT_DIR'], 'chirps_gefs_data')
 
-    chirps_dir = os.path.join(config['OUTPUT_DIR'], 'chirps_gefs_data')
     nc_files = list(Path(chirps_dir).glob('*.nc'))
-
     if not nc_files:
         print("   ❌ No CHIRPS-GEFS files found")
-        return None
+        return []
 
     try:
         nc_file = nc_files[0]
-        print(f"   📊 Loading: {nc_file.name}")
-
-        # Open dataset
         chirps_ds = xr.open_dataset(nc_file)
 
-        # Standardize coordinate names for CHIRPS-GEFS
-        print(f"   📋 Original coordinates: {list(chirps_ds.coords)}")
-        print(f"   📋 Original dimensions: {list(chirps_ds.dims)}")
-
-        # Rename coordinates if needed (CHIRPS uses y/x instead of lat/lon)
-        coord_renames = {}
+        # Standardize coordinates
         if 'y' in chirps_ds.dims and 'lat' not in chirps_ds.dims:
-            coord_renames['y'] = 'lat'
-        if 'x' in chirps_ds.dims and 'lon' not in chirps_ds.dims:
-            coord_renames['x'] = 'lon'
-
-        if coord_renames:
-            print(f"   🔄 Renaming coordinates: {coord_renames}")
-            chirps_ds = chirps_ds.rename(coord_renames)
-
-        print(f"   ✅ Standardized coordinates: {list(chirps_ds.coords)}")
+            chirps_ds = chirps_ds.rename({'y': 'lat', 'x': 'lon'})
 
         # Find precipitation variable
-        precip_vars = [
-            var for var in chirps_ds.data_vars if 'precip' in var.lower()
-        ]
-        if not precip_vars:
-            precip_vars = list(chirps_ds.data_vars)
-
+        precip_vars = [var for var in chirps_ds.data_vars if 'precip' in var.lower()]
         if precip_vars:
             chirps_ds = chirps_ds.rename({precip_vars[0]: 'precipitation'})
-            print(f"   🔄 Renamed variable: {precip_vars[0]} → precipitation")
 
-        # ROBUST subsetting
-        print("   🎯 Subsetting CHIRPS to region...")
-        chirps_regional = subset_to_region_robust(chirps_ds,
-                                                  config['LAT_BOUNDS'],
-                                                  config['LON_BOUNDS'],
-                                                  buffer_deg=2.0)
-
-        # Clean up full dataset
-        del chirps_ds
-        gc.collect()
-
-        chirps_regional.precipitation.attrs = {
+        chirps_ds.precipitation.attrs = {
             'long_name': 'precipitation_forecast',
             'units': 'mm/day',
             'source': 'CHIRPS-GEFS'
         }
 
-        print(
-            f"   🔄 Starting regional regridding ({len(chirps_regional.time)} time steps)..."
-        )
-
-        # Create regridder for regional data
-        regridder = get_or_create_regridder(chirps_regional, target_grid,
-                                            'bilinear', config['WEIGHTS_DIR'])
-
-        # Apply regridding
-        chirps_regridded = regridder(chirps_regional)
+        # Process each tile
+        tile_paths = []
+        for tile in tiles:
+            tile_path = process_tile_regridding(config, tile, chirps_ds,
+                                              config['TARGET_RESOLUTION'], 'chirps')
+            if tile_path:
+                tile_paths.append(tile_path)
 
         # Clean up
-        del regridder, chirps_regional
+        del chirps_ds
         gc.collect()
 
-        # Final subset to exact region
-        chirps_regridded = chirps_regridded.sel(
-            lat=slice(config['LAT_BOUNDS'][0], config['LAT_BOUNDS'][1]),
-            lon=slice(config['LON_BOUNDS'][0], config['LON_BOUNDS'][1]))
-
-        print(
-            f"   ✅ CHIRPS-GEFS regridded: {chirps_regridded.precipitation.shape}"
-        )
-        print(
-            f"   💾 Memory after CHIRPS-GEFS: {check_memory():.0f} MB available"
-        )
-
-        return chirps_regridded
+        return tile_paths
 
     except Exception as e:
-        print(f"   ❌ CHIRPS-GEFS processing failed: {e}")
-        import traceback
-        traceback.print_exc()
-        gc.collect()
-        return None
+        print(f"   ❌ CHIRPS-GEFS tiled processing failed: {e}")
+        return []
 
 
-def create_icechunk_dataset_optimized(config, pet_data, imerg_data,
-                                      chirps_data):
-    """Memory-optimized icechunk creation"""
-    print("🧊 Creating icechunk dataset (memory optimized)...")
+def concatenate_tiles_to_icechunk(config, pet_tiles, imerg_tiles, chirps_tiles):
+    """Concatenate all tiles into final icechunk dataset"""
+    print("🔗 Concatenating tiles into icechunk dataset...")
 
     if os.path.exists(config['ICECHUNK_PATH']):
         shutil.rmtree(config['ICECHUNK_PATH'])
-
-    # Get spatial coordinates
-    if pet_data is not None:
-        lat_coord = pet_data['lat']
-        lon_coord = pet_data['lon']
-    elif imerg_data is not None:
-        lat_coord = imerg_data['lat']
-        lon_coord = imerg_data['lon']
-    else:
-        print("   ❌ No data available")
-        return False, 0
-
-    # Create time coordinate
-    all_times = []
-    if imerg_data is not None:
-        all_times.extend(imerg_data['time'].values)
-    if chirps_data is not None:
-        all_times.extend(chirps_data['time'].values)
-    if not all_times:
-        all_times = [np.datetime64(config['TARGET_DATE'])]
-
-    unique_times = sorted(set(all_times))
 
     try:
         # Create icechunk store
@@ -651,109 +644,65 @@ def create_icechunk_dataset_optimized(config, pet_data, imerg_data,
         session = repo.writable_session("main")
         store = session.store
 
-        # Write variables sequentially
-        total_variables = 0
+        # Initialize store with a simple structure first
+        initialized = False
+        
+        # Process each data type
+        for data_type, tile_list in [('pet', pet_tiles), ('imerg', imerg_tiles), ('chirps', chirps_tiles)]:
+            if not tile_list:
+                continue
 
-        if pet_data is not None:
-            print("   📝 Writing PET data...")
+            print(f"   📋 Concatenating {data_type} tiles...")
 
-            pet_values = pet_data['pet'].values
-            if len(pet_values.shape) == 2:
-                broadcasted = np.broadcast_to(
-                    pet_values[np.newaxis, :, :],
-                    (len(unique_times), len(lat_coord), len(lon_coord)))
+            # Load all tiles for this data type
+            tile_datasets = []
+            for tile_path in tile_list:
+                try:
+                    tile_ds = xr.open_zarr(tile_path)
+                    tile_datasets.append(tile_ds)
+                except Exception as e:
+                    print(f"      ⚠ Failed to load tile {tile_path}: {e}")
+
+            if not tile_datasets:
+                continue
+
+            # Concatenate tiles spatially
+            # Sort by lat/lon bounds and concatenate
+            combined_ds = xr.combine_by_coords(tile_datasets, combine_attrs='drop_conflicts')
+            
+            # Rename variables to avoid conflicts and be more descriptive
+            if data_type == 'pet':
+                # PET typically has no time dimension
+                var_names = list(combined_ds.data_vars)
+                if var_names:
+                    combined_ds = combined_ds.rename({var_names[0]: f'{data_type}_data'})
             else:
-                broadcasted = pet_values
+                # For IMERG and CHIRPS, rename variables with data type prefix
+                var_names = list(combined_ds.data_vars)
+                if var_names:
+                    var_mappings = {}
+                    for var in var_names:
+                        var_mappings[var] = f'{data_type}_{var}'
+                    combined_ds = combined_ds.rename(var_mappings)
+                
+                # Also rename time dimension to be unique
+                if 'time' in combined_ds.dims:
+                    combined_ds = combined_ds.rename({'time': f'{data_type}_time'})
 
-            pet_ds = xr.Dataset({'pet': (['time', 'lat', 'lon'], broadcasted)},
-                                coords={
-                                    'time': unique_times,
-                                    'lat': lat_coord,
-                                    'lon': lon_coord
-                                })
-
-            pet_ds.pet.attrs = pet_data['pet'].attrs
-            pet_ds.to_zarr(store, mode='w', consolidated=False)
-            total_variables += 1
-
-            del pet_ds, broadcasted
-            gc.collect()
-
-        if imerg_data is not None:
-            print("   📝 Writing IMERG data...")
-
-            full_data = np.full(
-                (len(unique_times), len(lat_coord), len(lon_coord)),
-                np.nan,
-                dtype=np.float32)
-
-            for i, time_val in enumerate(imerg_data['time'].values):
-                if time_val in unique_times:
-                    time_idx = unique_times.index(time_val)
-                    full_data[time_idx, :, :] = imerg_data[
-                        'precipitation'].values[i, :, :]
-
-            imerg_ds = xr.Dataset(
-                {'imerg_precipitation': (['time', 'lat', 'lon'], full_data)},
-                coords={
-                    'time': unique_times,
-                    'lat': lat_coord,
-                    'lon': lon_coord
-                })
-
-            imerg_ds.imerg_precipitation.attrs = imerg_data[
-                'precipitation'].attrs
-
-            if total_variables == 0:
-                imerg_ds.to_zarr(store, mode='w', consolidated=False)
+            # Write to icechunk
+            if not initialized:
+                combined_ds.to_zarr(store, mode='w', consolidated=False)
+                initialized = True
             else:
-                imerg_ds.to_zarr(store, mode='a', consolidated=False)
-            total_variables += 1
+                # For subsequent datasets, ensure compatibility
+                combined_ds.to_zarr(store, mode='a', consolidated=False)
 
-            del imerg_ds, full_data
-            gc.collect()
-
-        if chirps_data is not None:
-            print("   📝 Writing CHIRPS-GEFS data...")
-
-            full_data = np.full(
-                (len(unique_times), len(lat_coord), len(lon_coord)),
-                np.nan,
-                dtype=np.float32)
-
-            for i, time_val in enumerate(chirps_data['time'].values):
-                if time_val in unique_times:
-                    time_idx = unique_times.index(time_val)
-                    full_data[time_idx, :, :] = chirps_data[
-                        'precipitation'].values[i, :, :]
-
-            chirps_ds = xr.Dataset(
-                {
-                    'chirps_gefs_precipitation':
-                    (['time', 'lat', 'lon'], full_data)
-                },
-                coords={
-                    'time': unique_times,
-                    'lat': lat_coord,
-                    'lon': lon_coord
-                })
-
-            chirps_ds.chirps_gefs_precipitation.attrs = chirps_data[
-                'precipitation'].attrs
-
-            if total_variables == 0:
-                chirps_ds.to_zarr(store, mode='w', consolidated=False)
-            else:
-                chirps_ds.to_zarr(store, mode='a', consolidated=False)
-            total_variables += 1
-
-            del chirps_ds, full_data
+            # Clean up
+            del combined_ds, tile_datasets
             gc.collect()
 
         # Commit the session
-        session.commit(
-            f"East Africa climate data for {config['TARGET_DATE'].strftime('%Y-%m-%d')}"
-        )
+        session.commit(f"Tiled regridded East Africa data for {config['TARGET_DATE'].strftime('%Y-%m-%d')}")
 
         # Calculate size
         total_size = 0
@@ -766,121 +715,138 @@ def create_icechunk_dataset_optimized(config, pet_data, imerg_data,
         size_gb = total_size / (1024 * 1024 * 1024)
 
         print(f"   ✅ Icechunk created: {config['ICECHUNK_PATH']}")
-        print(f"   📊 Variables: {total_variables}")
-        print(f"   🗺️ Grid: {len(lat_coord)} x {len(lon_coord)}")
-        print(f"   ⏰ Time steps: {len(unique_times)}")
         print(f"   💾 Size: {size_mb:.2f} MB ({size_gb:.3f} GB)")
 
         return True, total_size
 
     except Exception as e:
-        print(f"   ❌ Icechunk creation failed: {e}")
+        print(f"   ❌ Tile concatenation failed: {e}")
         import traceback
         traceback.print_exc()
         return False, 0
+
+
+def plot_sample_from_icechunk(config, num_samples=3):
+    """Plot sample time steps from final icechunk store"""
+    print("📊 Creating sample plots from icechunk dataset...")
+
+    try:
+        # Open icechunk dataset using icechunk library
+        storage = icechunk.local_filesystem_storage(config['ICECHUNK_PATH'])
+        repo = icechunk.Repository.open_existing(storage)
+        session = repo.readonly_session("main")
+        store = session.store
+        
+        ds = xr.open_zarr(store, consolidated=False)
+
+        # Get available variables and time steps
+        variables = list(ds.data_vars)
+        time_steps = ds.time.values if 'time' in ds.dims else [None]
+
+        print(f"   📋 Available variables: {variables}")
+        print(f"   ⏰ Time steps: {len(time_steps)}")
+
+        plots_created = []
+
+        # Sample a few time steps
+        sample_indices = np.linspace(0, len(time_steps)-1, min(num_samples, len(time_steps)), dtype=int)
+
+        for var in variables:
+            for i, time_idx in enumerate(sample_indices):
+                try:
+                    if len(time_steps) > 1:
+                        data_slice = ds[var].isel(time=time_idx)
+                        time_str = str(time_steps[time_idx])[:10]
+                        title = f"Final {var} - {time_str}"
+                        filename = f"final_{var}_time_{i:02d}.png"
+                    else:
+                        data_slice = ds[var]
+                        title = f"Final {var}"
+                        filename = f"final_{var}.png"
+
+                    plot_path = os.path.join(config['PLOTS_DIR'], filename)
+                    plot_data_with_cartopy(data_slice, title, plot_path,
+                                         bounds=config['LAT_BOUNDS'] + config['LON_BOUNDS'])
+                    plots_created.append(plot_path)
+
+                except Exception as e:
+                    print(f"      ⚠ Failed to plot {var} at time {i}: {e}")
+
+        print(f"   ✅ Created {len(plots_created)} final dataset plots")
+        return plots_created
+
+    except Exception as e:
+        print(f"   ❌ Final plotting failed: {e}")
+        return []
 
 
 def main(target_date,
          lat_bounds=(-12.0, 24.2),
          lon_bounds=(22.9, 51.6),
          resolution=0.01,
-         skip_download=False):
-    """Regional regridding workflow with robust subsetting"""
+         tile_size=10.0,
+         skip_download=False,
+         test_mode=False,
+         plot_only=False):
+    """Tiled regridding workflow v5"""
 
     # Setup
-    config = setup_config(target_date, lat_bounds, lon_bounds, resolution)
+    config = setup_config(target_date, lat_bounds, lon_bounds, resolution, tile_size, test_mode)
 
-    print("🚀 REGIONAL Climate Data Workflow v4 (robust subset + regrid)")
+    print("🚀 TILED Climate Data Workflow v5")
     print("=" * 80)
     print(f"Date: {target_date.strftime('%Y-%m-%d')}")
-    print(
-        f"Region: {lat_bounds[0]}° to {lat_bounds[1]}°N, {lon_bounds[0]}° to {lon_bounds[1]}°E"
-    )
+    print(f"Region: {lat_bounds[0]}° to {lat_bounds[1]}°N, {lon_bounds[0]}° to {lon_bounds[1]}°E")
     print(f"Resolution: {resolution}°")
-    print(f"Strategy: Robust Subset → Regrid (memory efficient!)")
+    print(f"Tile size: {tile_size}°")
+    print(f"Test mode: {test_mode}")
+    print(f"Strategy: Download → Plot → Tile Regrid → Concatenate → Plot")
     print("=" * 80)
-
-    check_memory()
 
     start_time = time.time()
 
-    # Step 1: Download (optional)
-    if skip_download:
-        print("\n📥 STEP 1: Skipping Download (using existing data)")
-        pet_dir = os.path.join(config['OUTPUT_DIR'], 'pet_data')
-        imerg_dir = os.path.join(config['OUTPUT_DIR'], 'imerg_data')
-        chirps_dir = os.path.join(config['OUTPUT_DIR'], 'chirps_gefs_data')
-
-        download_results = {
-            'pet':
-            os.path.exists(pet_dir)
-            and len(list(Path(pet_dir).glob('*.bil'))) > 0,
-            'imerg':
-            os.path.exists(imerg_dir)
-            and len(list(Path(imerg_dir).glob('*.tif'))) > 0,
-            'chirps':
-            os.path.exists(chirps_dir)
-            and len(list(Path(chirps_dir).glob('*.nc'))) > 0
-        }
-
-        print(
-            f"   PET data available: {'✅' if download_results['pet'] else '❌'}"
-        )
-        print(
-            f"   IMERG data available: {'✅' if download_results['imerg'] else '❌'}"
-        )
-        print(
-            f"   CHIRPS-GEFS data available: {'✅' if download_results['chirps'] else '❌'}"
-        )
-
-        download_time = 0
+    # Step 1: Download (if not skipped or test mode)
+    if test_mode or skip_download:
+        print("\n📥 STEP 1: Using existing data")
+        if test_mode:
+            print("   🧪 Test mode: Using 20250722 folder data")
+            config['OUTPUT_DIR'] = "./20250722"
     else:
         print("\n📥 STEP 1: Data Download")
         download_results = download_all_data(config)
-        download_time = time.time() - start_time
 
-    # Step 2: Regional regridding with robust subsetting
-    print("\n🗺️ STEP 2: Regional Regridding (Robust Subset → Regrid)")
-    regrid_start = time.time()
+    # Step 2: Plot original data
+    print("\n📊 STEP 2: Plot Original Data")
+    original_plots = load_and_plot_original_data(config)
 
-    target_grid = create_target_grid(config)
+    if plot_only:
+        print("   🎯 Plot-only mode complete")
+        return True, 0
 
-    # Process variables with robust regional approach
-    pet_data = None
-    imerg_data = None
-    chirps_data = None
+    # Step 3: Create tiles and process
+    print("\n🧩 STEP 3: Tiled Regridding")
 
-    if download_results['pet']:
-        pet_data = load_and_regrid_pet_regional(config, target_grid)
-        gc.collect()
+    # Create tile bounds
+    tiles = create_tile_bounds(lat_bounds, lon_bounds, tile_size)
 
-    if download_results['imerg']:
-        imerg_data = load_and_regrid_imerg_regional(config, target_grid)
-        gc.collect()
+    # Process each data type with tiles
+    pet_tiles = load_and_regrid_pet_tiled(config, tiles)
+    imerg_tiles = load_and_regrid_imerg_tiled(config, tiles)
+    chirps_tiles = load_and_regrid_chirps_tiled(config, tiles)
 
-    if download_results['chirps']:
-        chirps_data = load_and_regrid_chirps_regional(config, target_grid)
-        gc.collect()
+    # Step 4: Concatenate tiles
+    print("\n🔗 STEP 4: Concatenate Tiles")
+    success, dataset_size = concatenate_tiles_to_icechunk(config, pet_tiles, imerg_tiles, chirps_tiles)
 
-    regrid_time = time.time() - regrid_start
+    # Step 5: Plot final results
+    print("\n📊 STEP 5: Plot Final Results")
+    final_plots = plot_sample_from_icechunk(config)
 
-    # Step 3: Icechunk
-    print("\n🧊 STEP 3: Icechunk Creation")
-    icechunk_start = time.time()
-
-    success, dataset_size = create_icechunk_dataset_optimized(
-        config, pet_data, imerg_data, chirps_data)
-
-    icechunk_time = time.time() - icechunk_start
     total_time = time.time() - start_time
-
-    # Final cleanup
-    del pet_data, imerg_data, chirps_data, target_grid
-    gc.collect()
 
     # Summary
     print("\n" + "=" * 80)
-    print("🎉 REGIONAL WORKFLOW v4 COMPLETE")
+    print("🎉 TILED WORKFLOW v5 COMPLETE")
     print("=" * 80)
 
     if success:
@@ -889,30 +855,11 @@ def main(target_date,
 
         print(f"✅ Success! Dataset created: {config['ICECHUNK_PATH']}")
         print(f"💾 Final size: {size_mb:.2f} MB ({size_gb:.3f} GB)")
-        print(
-            f"⏱️ Total time: {total_time:.2f} seconds ({total_time/60:.2f} minutes)"
-        )
-        print(f"📊 Timing breakdown:")
-        print(
-            f"   Download: {download_time:.2f}s ({download_time/total_time*100:.1f}%)"
-        )
-        print(
-            f"   Regridding: {regrid_time:.2f}s ({regrid_time/total_time*100:.1f}%)"
-        )
-        print(
-            f"   Icechunk: {icechunk_time:.2f}s ({icechunk_time/total_time*100:.1f}%)"
-        )
+        print(f"⏱ Total time: {total_time:.2f} seconds ({total_time/60:.2f} minutes)")
+        print(f"🧩 Tiles processed: {len(tiles)}")
+        print(f"📊 Original plots: {len(original_plots)}")
+        print(f"📊 Final plots: {len(final_plots)}")
 
-        # Show cache info
-        weight_files = list(Path(config['WEIGHTS_DIR']).glob('*.nc'))
-        if weight_files:
-            total_cache_size = sum(f.stat().st_size
-                                   for f in weight_files) / (1024**2)
-            print(
-                f"💾 Regional regridder cache: {len(weight_files)} files, {total_cache_size:.1f} MB"
-            )
-
-        check_memory()
         return True, dataset_size
     else:
         print("❌ Workflow failed")
@@ -921,36 +868,47 @@ def main(target_date,
 
 # Example usage
 if __name__ == "__main__":
-    # Example: Process July 22, 2025 with robust regional regridding
+    # Parse command line arguments
+    skip_download = '--skip-download' in sys.argv
+    test_mode = '--test-mode' in sys.argv
+    plot_only = '--plot-only' in sys.argv
+
+    # Example: Process July 22, 2025 with tiled regridding
     target_date = datetime(2025, 7, 22)
 
-    # Try different resolutions
-    resolutions = [0.01]
-
-    for resolution in resolutions:
-        print(f"\n🧪 Attempting {resolution}° resolution...")
-        try:
-            skip_download = len(sys.argv) > 1 and '--skip-download' in sys.argv
-            success, size = main(target_date,
-                                 resolution=resolution,
-                                 skip_download=skip_download)
-            if success:
-                print(f"\n🎯 Success with {resolution}° resolution!")
-                print(
-                    f"Dataset location: ./east_africa_regridded_{target_date.strftime('%Y%m%d')}.zarr"
-                )
-                print(f"Dataset size: {size / (1024*1024):.2f} MB")
-                break
-        except MemoryError:
-            print(
-                f"❌ Out of memory with {resolution}° resolution, trying lower resolution..."
-            )
-            continue
-        except Exception as e:
-            print(f"❌ Failed with {resolution}° resolution: {e}")
-            continue
+    # Different configurations for testing
+    if test_mode:
+        # Test with 10km resolution and smaller tiles
+        resolution = 0.1  # 10km
+        tile_size = 5.0   # 5-degree tiles
+        print("🧪 TEST MODE: 10km resolution, 5-degree tiles")
     else:
-        print("❌ All resolutions failed")
+        # Production with 1km resolution
+        resolution = 0.01  # 1km
+        tile_size = 10.0   # 10-degree tiles
+        print("🚀 PRODUCTION MODE: 1km resolution, 10-degree tiles")
+
+    try:
+        success, size = main(target_date,
+                           resolution=resolution,
+                           tile_size=tile_size,
+                           skip_download=skip_download,
+                           test_mode=test_mode,
+                           plot_only=plot_only)
+
+        if success:
+            print(f"\n🎯 Success! Check plots in: ./plots_{target_date.strftime('%Y%m%d')}/")
+            if not plot_only:
+                print(f"Dataset location: {target_date.strftime('%Y%m%d')}.zarr")
+                print(f"Dataset size: {size / (1024*1024):.2f} MB")
+        else:
+            print("❌ Workflow failed")
+            sys.exit(1)
+
+    except Exception as e:
+        print(f"❌ Workflow failed with error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
     sys.exit(0)
