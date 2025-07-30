@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Memory-Optimized Complete workflow v2: Download → Regrid → Icechunk
+Memory-Optimized Complete workflow v3: Download → Subset → Regrid → Icechunk
 Features:
+- SUBSET FIRST, then regrid (much more memory efficient!)
+- Only regrid the region of interest, not the entire globe
 - Optimized for machines with limited RAM (4-8 GB)
-- Sequential processing to minimize peak memory usage  
-- xesmf regridder weight caching for massive memory savings
-- Reuses saved regridding weights to avoid recreating 2-3GB weight matrices
+- xesmf regridder weight caching for regional grids
 
 Usage:
-  python create_regridded_icechunk_memory_optimized_v2.py                  # Download + regrid
-  python create_regridded_icechunk_memory_optimized_v2.py --skip-download  # Only regrid existing data
+  python create_regridded_icechunk_memory_optimized_v3.py                  # Download + regrid
+  python create_regridded_icechunk_memory_optimized_v3.py --skip-download  # Only regrid existing data
 """
 
 import sys
@@ -43,7 +43,7 @@ def setup_config(target_date, lat_bounds=(-12.0, 24.2), lon_bounds=(22.9, 51.6),
         'TARGET_RESOLUTION': resolution,
         'OUTPUT_DIR': f"./{target_date.strftime('%Y%m%d')}",
         'ICECHUNK_PATH': f"./east_africa_regridded_{target_date.strftime('%Y%m%d')}.zarr",
-        'WEIGHTS_DIR': "./regridder_weights"  # New: directory for cached weights
+        'WEIGHTS_DIR': "./regridder_weights_regional"  # Regional weights cache
     }
     
     # Create weights directory if it doesn't exist
@@ -78,48 +78,87 @@ def create_target_grid(config):
     grid_points = lat_points * lon_points
     memory_per_layer = grid_points * 4 / (1024**2)  # MB
     
-    print(f"🗺️ Target grid: {lat_points} x {lon_points} = {grid_points:,} points")
+    print(f"🗺️ Regional target grid: {lat_points} x {lon_points} = {grid_points:,} points")
     print(f"💾 Memory per layer: {memory_per_layer:.1f} MB")
     
     return target_grid
 
-def get_or_create_regridder(source_ds, target_grid, method='bilinear', weights_dir="./regridder_weights"):
+def subset_to_region_with_buffer(ds, lat_bounds, lon_bounds, buffer_deg=2.0):
     """
-    Get cached regridder or create new one and save weights
+    Subset dataset to region with buffer for regridding
     
-    This dramatically reduces memory usage by reusing pre-computed regridding weights.
-    Weight files are typically small (few MB) but save 2-3GB of RAM during regridding.
+    Buffer is important because:
+    1. Regridding needs nearby points for interpolation
+    2. Edge effects can occur without sufficient buffer
+    3. Better to subset generously, then crop after regridding
+    """
+    lat_min, lat_max = lat_bounds
+    lon_min, lon_max = lon_bounds
+    
+    # Add buffer
+    lat_min_buf = lat_min - buffer_deg
+    lat_max_buf = lat_max + buffer_deg
+    lon_min_buf = lon_min - buffer_deg
+    lon_max_buf = lon_max + buffer_deg
+    
+    print(f"   📐 Subsetting to region with {buffer_deg}° buffer:")
+    print(f"      Original region: {lat_min}° to {lat_max}°N, {lon_min}° to {lon_max}°E")
+    print(f"      Buffered region: {lat_min_buf}° to {lat_max_buf}°N, {lon_min_buf}° to {lon_max_buf}°E")
+    
+    # Subset the dataset
+    try:
+        ds_subset = ds.sel(
+            lat=slice(lat_min_buf, lat_max_buf),
+            lon=slice(lon_min_buf, lon_max_buf)
+        )
+        
+        original_size = len(ds.lat) * len(ds.lon)
+        subset_size = len(ds_subset.lat) * len(ds_subset.lon)
+        reduction_factor = original_size / subset_size
+        
+        print(f"   📊 Subset: {len(ds_subset.lat)} x {len(ds_subset.lon)} = {subset_size:,} points")
+        print(f"   🎯 Reduction: {original_size:,} → {subset_size:,} points ({reduction_factor:.1f}x smaller)")
+        
+        return ds_subset
+        
+    except Exception as e:
+        print(f"   ⚠️ Subset failed ({e}), using full dataset")
+        return ds
+
+def get_or_create_regridder(source_ds, target_grid, method='bilinear', weights_dir="./regridder_weights_regional"):
+    """
+    Get cached regridder or create new one and save weights for REGIONAL grids
+    Much smaller weight files since we're only regridding regional data!
     """
     
-    # Create a unique identifier for this source->target grid combination
+    # Create a unique identifier for this regional source->target grid combination
     source_shape = f"{len(source_ds.lat)}x{len(source_ds.lon)}"
     target_shape = f"{len(target_grid.lat)}x{len(target_grid.lon)}"
     
-    # Get lat/lon bounds for more specific identification
+    # Get lat/lon bounds for identification  
     source_lat_range = f"{float(source_ds.lat.min()):.1f}to{float(source_ds.lat.max()):.1f}"
     source_lon_range = f"{float(source_ds.lon.min()):.1f}to{float(source_ds.lon.max()):.1f}"
     target_lat_range = f"{float(target_grid.lat.min()):.1f}to{float(target_grid.lat.max()):.1f}"
     target_lon_range = f"{float(target_grid.lon.min()):.1f}to{float(target_grid.lon.max()):.1f}"
     
-    weight_filename = f"{method}_{source_shape}_{source_lat_range}_{source_lon_range}_to_{target_shape}_{target_lat_range}_{target_lon_range}.nc"
+    weight_filename = f"regional_{method}_{source_shape}_{source_lat_range}_{source_lon_range}_to_{target_shape}_{target_lat_range}_{target_lon_range}.nc"
     weight_path = os.path.join(weights_dir, weight_filename)
     
     # Check if weights already exist
     if os.path.exists(weight_path):
-        print(f"   🔄 Loading cached regridder weights: {weight_filename}")
+        print(f"   🔄 Loading cached regional regridder weights")
         print(f"   📁 Weight file size: {os.path.getsize(weight_path) / (1024**2):.1f} MB")
         
         try:
             # Load regridder with pre-computed weights
             regridder = xe.Regridder(source_ds, target_grid, method, weights=weight_path)
-            print(f"   ✅ Loaded cached regridder (~33ms vs several minutes)")
+            print(f"   ✅ Loaded cached regional regridder (~33ms)")
             return regridder
         except Exception as e:
             print(f"   ⚠️ Failed to load cached weights ({e}), creating new regridder...")
     
     # Create new regridder and save weights
-    print(f"   🔧 Creating new regridder and saving weights...")
-    print(f"   ⚠️ This may take several minutes and use 2-3GB RAM...")
+    print(f"   🔧 Creating new REGIONAL regridder (much smaller than global!)")
     
     start_time = time.time()
     regridder = xe.Regridder(source_ds, target_grid, method)
@@ -129,9 +168,8 @@ def get_or_create_regridder(source_ds, target_grid, method='bilinear', weights_d
     try:
         saved_path = regridder.to_netcdf(weight_path)
         weight_size = os.path.getsize(weight_path) / (1024**2)
-        print(f"   💾 Saved regridder weights: {weight_filename} ({weight_size:.1f} MB)")
-        print(f"   ⏱️ Regridder creation time: {creation_time:.1f}s")
-        print(f"   🔮 Next time this will load in ~33ms!")
+        print(f"   💾 Saved regional regridder weights ({weight_size:.1f} MB)")
+        print(f"   ⏱️ Regional regridder creation time: {creation_time:.1f}s")
     except Exception as e:
         print(f"   ⚠️ Failed to save weights: {e}")
     
@@ -169,9 +207,9 @@ def download_all_data(config):
         'chirps': chirps_success
     }
 
-def load_and_regrid_pet_optimized_v2(config, target_grid):
-    """Memory-optimized PET processing with weight caching"""
-    print("🌡️ Processing PET data (memory optimized v2)...")
+def load_and_regrid_pet_regional(config, target_grid):
+    """REGIONAL PET processing - subset first, then regrid"""
+    print("🌡️ Processing PET data (regional subset + regrid)...")
     
     available_mem = check_memory()
     
@@ -192,7 +230,7 @@ def load_and_regrid_pet_optimized_v2(config, target_grid):
         file_size = len(data)
         print(f"   📊 File size: {file_size} values ({file_size * 4 / (1024**2):.1f} MB)")
         
-        # Determine dimensions with memory-efficient approach
+        # Determine dimensions
         possible_dims = [
             (181, 360),   # 1° global
             (361, 720),   # 0.5° global
@@ -220,46 +258,52 @@ def load_and_regrid_pet_optimized_v2(config, target_grid):
         data = data.reshape(height, width)
         data = np.where(data < -9000, np.nan, data)
         
-        # Create coordinates
+        # Create coordinates (global grid)
         lat_step = 180.0 / height
         lon_step = 360.0 / width
         lat_global = np.linspace(90 - lat_step/2, -90 + lat_step/2, height)
         lon_global = np.linspace(-180 + lon_step/2, 180 - lon_step/2, width)
         
-        # Create dataset
-        pet_ds = xr.Dataset({
+        # Create full global dataset
+        pet_ds_global = xr.Dataset({
             'pet': (['lat', 'lon'], data)
         }, coords={
             'lat': lat_global,
             'lon': lon_global
         })
         
-        pet_ds.pet.attrs = {
+        pet_ds_global.pet.attrs = {
             'long_name': 'potential_evapotranspiration',
             'units': 'mm/day',
             'source': 'USGS FEWS NET'
         }
         
-        print("   🔄 Starting regridding with weight caching...")
+        # SUBSET TO REGION FIRST (this is the key improvement!)
+        print("   🎯 Subsetting to East Africa region...")
+        pet_ds_regional = subset_to_region_with_buffer(
+            pet_ds_global, 
+            config['LAT_BOUNDS'], 
+            config['LON_BOUNDS'], 
+            buffer_deg=2.0
+        )
         
-        # Get cached regridder or create new one
-        regridder = get_or_create_regridder(pet_ds, target_grid, 'bilinear', config['WEIGHTS_DIR'])
-        
-        # Apply regridding
-        pet_regridded = regridder(pet_ds)
-        
-        # Aggressive cleanup to free memory immediately
-        del regridder
-        del pet_ds
-        del data
+        # Clean up global dataset
+        del pet_ds_global, data
         gc.collect()
         
-        # Force more aggressive memory cleanup
-        import ctypes
-        libc = ctypes.CDLL("libc.so.6")
-        libc.malloc_trim(0)  # Return freed memory to OS
+        print("   🔄 Starting REGIONAL regridding...")
         
-        # Subset to region
+        # Create regridder for REGIONAL data (much smaller!)
+        regridder = get_or_create_regridder(pet_ds_regional, target_grid, 'bilinear', config['WEIGHTS_DIR'])
+        
+        # Apply regridding on regional data
+        pet_regridded = regridder(pet_ds_regional)
+        
+        # Clean up
+        del regridder, pet_ds_regional
+        gc.collect()
+        
+        # Final subset to exact region (remove buffer)
         pet_regridded = pet_regridded.sel(
             lat=slice(config['LAT_BOUNDS'][0], config['LAT_BOUNDS'][1]),
             lon=slice(config['LON_BOUNDS'][0], config['LON_BOUNDS'][1])
@@ -272,12 +316,12 @@ def load_and_regrid_pet_optimized_v2(config, target_grid):
         
     except Exception as e:
         print(f"   ❌ PET processing failed: {e}")
-        gc.collect()  # Clean up on failure
+        gc.collect()
         return None
 
-def load_and_regrid_imerg_optimized_v2(config, target_grid):
-    """Memory-optimized IMERG processing with weight caching"""
-    print("🛰️ Processing IMERG data (memory optimized v2)...")
+def load_and_regrid_imerg_regional(config, target_grid):
+    """REGIONAL IMERG processing - subset first, then regrid"""
+    print("🛰️ Processing IMERG data (regional subset + regrid)...")
     
     available_mem = check_memory()
     
@@ -291,54 +335,51 @@ def load_and_regrid_imerg_optimized_v2(config, target_grid):
     print(f"   📊 Processing {len(tiff_files)} IMERG files")
     
     try:
-        # Process files in smaller batches to manage memory
-        batch_size = min(3, len(tiff_files))  # Process 3 files at a time
-        all_datasets = []
+        # Process files and subset each one
+        regional_datasets = []
         
-        for i in range(0, len(tiff_files), batch_size):
-            batch_files = tiff_files[i:i+batch_size]
-            print(f"   🔄 Processing batch {i//batch_size + 1}/{(len(tiff_files)-1)//batch_size + 1}")
+        for i, tiff_file in enumerate(sorted(tiff_files)):
+            print(f"   🔄 Processing file {i+1}/{len(tiff_files)}: {tiff_file.name}")
             
-            batch_datasets = []
+            # Extract date
+            filename = os.path.basename(tiff_file)
+            try:
+                date_str = filename.split('.')[3][:8]
+                file_date = datetime.strptime(date_str, '%Y%m%d')
+            except:
+                file_date = datetime.fromtimestamp(os.path.getmtime(tiff_file))
             
-            for tiff_file in batch_files:
-                # Extract date
-                filename = os.path.basename(tiff_file)
-                try:
-                    date_str = filename.split('.')[3][:8]
-                    file_date = datetime.strptime(date_str, '%Y%m%d')
-                except:
-                    file_date = datetime.fromtimestamp(os.path.getmtime(tiff_file))
-                
-                # Load file
-                ds = rioxarray.open_rasterio(tiff_file)
-                ds = ds.squeeze('band').drop('band')
-                
-                if 'x' in ds.dims:
-                    ds = ds.rename({'x': 'lon', 'y': 'lat'})
-                
-                ds = ds.expand_dims('time')
-                ds = ds.assign_coords(time=[file_date])
-                batch_datasets.append(ds)
+            # Load file
+            ds = rioxarray.open_rasterio(tiff_file)
+            ds = ds.squeeze('band').drop('band')
             
-            # Combine batch
-            if batch_datasets:
-                batch_combined = xr.concat(batch_datasets, dim='time')
-                all_datasets.append(batch_combined)
-                
-                # Clean up batch datasets
-                del batch_datasets
-                gc.collect()
+            if 'x' in ds.dims:
+                ds = ds.rename({'x': 'lon', 'y': 'lat'})
+            
+            ds = ds.expand_dims('time')
+            ds = ds.assign_coords(time=[file_date])
+            
+            # SUBSET TO REGION IMMEDIATELY (key improvement!)
+            print(f"      🎯 Subsetting IMERG file to region...")
+            ds_regional = subset_to_region_with_buffer(
+                ds, 
+                config['LAT_BOUNDS'], 
+                config['LON_BOUNDS'], 
+                buffer_deg=2.0
+            )
+            
+            regional_datasets.append(ds_regional)
+            
+            # Clean up original dataset
+            del ds
+            gc.collect()
         
-        # Combine all batches
-        if not all_datasets:
-            print("   ❌ No IMERG data loaded")
-            return None
-            
-        imerg_combined = xr.concat(all_datasets, dim='time')
+        # Combine regional datasets
+        print("   🔗 Combining regional IMERG datasets...")
+        imerg_combined = xr.concat(regional_datasets, dim='time')
         
-        # Clean up intermediate datasets
-        del all_datasets
+        # Clean up individual datasets
+        del regional_datasets
         gc.collect()
         
         # Rename precipitation variable
@@ -346,13 +387,11 @@ def load_and_regrid_imerg_optimized_v2(config, target_grid):
             data_var = list(imerg_combined.data_vars)[0]
             imerg_combined = imerg_combined.rename({data_var: 'precipitation'})
         else:
-            # Handle case where imerg_combined is a DataArray
             if hasattr(imerg_combined, 'name'):
                 if imerg_combined.name != 'precipitation':
                     imerg_combined.name = 'precipitation'
             else:
                 imerg_combined.name = 'precipitation'
-            # Convert DataArray to Dataset
             imerg_combined = imerg_combined.to_dataset()
         
         imerg_combined.precipitation.attrs = {
@@ -361,20 +400,19 @@ def load_and_regrid_imerg_optimized_v2(config, target_grid):
             'source': 'NASA IMERG'
         }
         
-        print("   🔄 Starting regridding with weight caching...")
+        print("   🔄 Starting REGIONAL regridding...")
         
-        # Get cached regridder or create new one
+        # Create regridder for REGIONAL data
         regridder = get_or_create_regridder(imerg_combined, target_grid, 'bilinear', config['WEIGHTS_DIR'])
         
-        # Apply regridding
+        # Apply regridding on regional data
         imerg_regridded = regridder(imerg_combined)
         
         # Clean up
-        del regridder
-        del imerg_combined
+        del regridder, imerg_combined
         gc.collect()
         
-        # Subset to region
+        # Final subset to exact region
         imerg_regridded = imerg_regridded.sel(
             lat=slice(config['LAT_BOUNDS'][0], config['LAT_BOUNDS'][1]),
             lon=slice(config['LON_BOUNDS'][0], config['LON_BOUNDS'][1])
@@ -390,9 +428,9 @@ def load_and_regrid_imerg_optimized_v2(config, target_grid):
         gc.collect()
         return None
 
-def load_and_regrid_chirps_optimized_v2(config, target_grid):
-    """Memory-optimized CHIRPS-GEFS processing with weight caching"""
-    print("🌧️ Processing CHIRPS-GEFS data (memory optimized v2)...")
+def load_and_regrid_chirps_regional(config, target_grid):
+    """REGIONAL CHIRPS-GEFS processing - subset first, then regrid"""
+    print("🌧️ Processing CHIRPS-GEFS data (regional subset + regrid)...")
     
     available_mem = check_memory()
     
@@ -408,8 +446,8 @@ def load_and_regrid_chirps_optimized_v2(config, target_grid):
         nc_file = nc_files[0]
         print(f"   📊 Loading: {nc_file.name}")
         
-        # Open with chunks to manage memory
-        chirps_ds = xr.open_dataset(nc_file, chunks={'time': 4})  # Process 4 time steps at once
+        # Open dataset
+        chirps_ds = xr.open_dataset(nc_file)
         
         # Find precipitation variable
         precip_vars = [var for var in chirps_ds.data_vars if 'precip' in var.lower()]
@@ -419,57 +457,38 @@ def load_and_regrid_chirps_optimized_v2(config, target_grid):
         if precip_vars:
             chirps_ds = chirps_ds.rename({precip_vars[0]: 'precipitation'})
         
-        chirps_ds.precipitation.attrs = {
+        # SUBSET TO REGION FIRST (key improvement!)
+        print("   🎯 Subsetting CHIRPS to region...")
+        chirps_regional = subset_to_region_with_buffer(
+            chirps_ds, 
+            config['LAT_BOUNDS'], 
+            config['LON_BOUNDS'], 
+            buffer_deg=2.0
+        )
+        
+        # Clean up full dataset
+        del chirps_ds
+        gc.collect()
+        
+        chirps_regional.precipitation.attrs = {
             'long_name': 'precipitation_forecast',
             'units': 'mm/day',
             'source': 'CHIRPS-GEFS'
         }
         
-        print(f"   🔄 Starting regridding ({len(chirps_ds.time)} time steps) with weight caching...")
+        print(f"   🔄 Starting REGIONAL regridding ({len(chirps_regional.time)} time steps)...")
         
-        # Check if we need to process in chunks
-        time_steps = len(chirps_ds.time)
-        estimated_memory = time_steps * 44.8  # MB per time step
+        # Create regridder for REGIONAL data
+        regridder = get_or_create_regridder(chirps_regional, target_grid, 'bilinear', config['WEIGHTS_DIR'])
         
-        if available_mem and estimated_memory > available_mem * 0.7:
-            print(f"   ⚠️ Large dataset ({estimated_memory:.0f} MB) - processing in chunks")
-            
-            # Process in time chunks
-            chunk_size = max(1, int(available_mem * 0.5 / 44.8))  # Conservative chunk size
-            regridded_chunks = []
-            
-            # Get regridder once for all chunks (weights will be cached after first use)
-            sample_chunk = chirps_ds.isel(time=slice(0, 1))
-            regridder = get_or_create_regridder(sample_chunk, target_grid, 'bilinear', config['WEIGHTS_DIR'])
-            
-            for i in range(0, time_steps, chunk_size):
-                end_idx = min(i + chunk_size, time_steps)
-                chunk = chirps_ds.isel(time=slice(i, end_idx))
-                
-                print(f"     Processing time chunk {i+1}-{end_idx}/{time_steps}")
-                
-                # Apply regridding with cached regridder
-                chunk_regridded = regridder(chunk)
-                regridded_chunks.append(chunk_regridded)
-                del chunk
-                gc.collect()
-            
-            # Combine chunks
-            chirps_regridded = xr.concat(regridded_chunks, dim='time')
-            del regridded_chunks
-            del regridder
-            
-        else:
-            # Process all at once with cached regridder
-            regridder = get_or_create_regridder(chirps_ds, target_grid, 'bilinear', config['WEIGHTS_DIR'])
-            chirps_regridded = regridder(chirps_ds)
-            del regridder
+        # Apply regridding on regional data
+        chirps_regridded = regridder(chirps_regional)
         
         # Clean up
-        del chirps_ds
+        del regridder, chirps_regional
         gc.collect()
         
-        # Subset to region
+        # Final subset to exact region
         chirps_regridded = chirps_regridded.sel(
             lat=slice(config['LAT_BOUNDS'][0], config['LAT_BOUNDS'][1]),
             lon=slice(config['LON_BOUNDS'][0], config['LON_BOUNDS'][1])
@@ -515,19 +534,18 @@ def create_icechunk_dataset_optimized(config, pet_data, imerg_data, chirps_data)
     unique_times = sorted(set(all_times))
     
     try:
-        # Create icechunk store first
+        # Create icechunk store
         storage = icechunk.local_filesystem_storage(config['ICECHUNK_PATH'])
         repo = icechunk.Repository.create(storage)
         session = repo.writable_session("main")
         store = session.store
         
-        # Write variables one by one to minimize memory usage
+        # Write variables sequentially
         total_variables = 0
         
         if pet_data is not None:
             print("   📝 Writing PET data...")
             
-            # Create dataset with just PET
             pet_values = pet_data['pet'].values
             if len(pet_values.shape) == 2:
                 broadcasted = np.broadcast_to(
@@ -555,7 +573,6 @@ def create_icechunk_dataset_optimized(config, pet_data, imerg_data, chirps_data)
         if imerg_data is not None:
             print("   📝 Writing IMERG data...")
             
-            # Create aligned dataset for IMERG
             full_data = np.full(
                 (len(unique_times), len(lat_coord), len(lon_coord)), 
                 np.nan, dtype=np.float32
@@ -588,7 +605,6 @@ def create_icechunk_dataset_optimized(config, pet_data, imerg_data, chirps_data)
         if chirps_data is not None:
             print("   📝 Writing CHIRPS-GEFS data...")
             
-            # Create aligned dataset for CHIRPS-GEFS
             full_data = np.full(
                 (len(unique_times), len(lat_coord), len(lon_coord)), 
                 np.nan, dtype=np.float32
@@ -646,17 +662,17 @@ def create_icechunk_dataset_optimized(config, pet_data, imerg_data, chirps_data)
         return False, 0
 
 def main(target_date, lat_bounds=(-12.0, 24.2), lon_bounds=(22.9, 51.6), resolution=0.01, skip_download=False):
-    """Memory-optimized main workflow function with regridder caching"""
+    """REGIONAL regridding workflow - subset first, then regrid!"""
     
     # Setup
     config = setup_config(target_date, lat_bounds, lon_bounds, resolution)
     
-    print("🚀 Memory-Optimized Climate Data Workflow v2 (with regridder caching)")
+    print("🚀 REGIONAL Climate Data Workflow v3 (subset first, then regrid)")
     print("=" * 80)
     print(f"Date: {target_date.strftime('%Y-%m-%d')}")
     print(f"Region: {lat_bounds[0]}° to {lat_bounds[1]}°N, {lon_bounds[0]}° to {lon_bounds[1]}°E")
     print(f"Resolution: {resolution}°")
-    print(f"Weights cache: {config['WEIGHTS_DIR']}")
+    print(f"Strategy: Subset → Regrid (much more memory efficient!)")
     print("=" * 80)
     
     # Check initial memory
@@ -667,7 +683,6 @@ def main(target_date, lat_bounds=(-12.0, 24.2), lon_bounds=(22.9, 51.6), resolut
     # Step 1: Download (optional)
     if skip_download:
         print("\n📥 STEP 1: Skipping Download (using existing data)")
-        # Check if data directories exist
         pet_dir = os.path.join(config['OUTPUT_DIR'], 'pet_data')
         imerg_dir = os.path.join(config['OUTPUT_DIR'], 'imerg_data')
         chirps_dir = os.path.join(config['OUTPUT_DIR'], 'chirps_gefs_data')
@@ -688,69 +703,33 @@ def main(target_date, lat_bounds=(-12.0, 24.2), lon_bounds=(22.9, 51.6), resolut
         download_results = download_all_data(config)
         download_time = time.time() - start_time
     
-    # Step 2: Sequential Regridding (memory optimized with caching)
-    print("\n🗺️ STEP 2: Sequential Regridding (Memory Optimized v2 with Caching)")
+    # Step 2: REGIONAL Regridding (subset first!)
+    print("\n🗺️ STEP 2: REGIONAL Regridding (Subset → Regrid)")
     regrid_start = time.time()
     
     target_grid = create_target_grid(config)
     
-    # Process variables sequentially to minimize peak memory
+    # Process variables with regional approach
     pet_data = None
     imerg_data = None  
     chirps_data = None
     
-    # Check memory before each processing step
-    available_mem = check_memory()
-    
     if download_results['pet']:
-        print(f"   🔄 Starting PET processing (need ~3GB for new weights)")
-        pet_data = load_and_regrid_pet_optimized_v2(config, target_grid)
-        
-        # Force memory cleanup after PET
+        pet_data = load_and_regrid_pet_regional(config, target_grid)
         gc.collect()
-        import ctypes
-        try:
-            libc = ctypes.CDLL("libc.so.6")
-            libc.malloc_trim(0)
-        except:
-            pass
-        
-        available_mem = check_memory()
-        print(f"   🧹 Cleaned up after PET processing")
     
     if download_results['imerg']:
-        available_mem = check_memory()
-        if available_mem and available_mem < 3500:  # Need at least 3.5GB for IMERG weights
-            print(f"   ⚠️ Warning: Only {available_mem:.0f}MB available, IMERG may fail")
-            print(f"   💡 Consider running PET-only or using lower resolution")
-        
-        print(f"   🔄 Starting IMERG processing (need ~3GB for new weights)")
-        imerg_data = load_and_regrid_imerg_optimized_v2(config, target_grid)
-        
-        # Force memory cleanup after IMERG
+        imerg_data = load_and_regrid_imerg_regional(config, target_grid)
         gc.collect()
-        try:
-            libc = ctypes.CDLL("libc.so.6")
-            libc.malloc_trim(0)
-        except:
-            pass
-        
-        available_mem = check_memory()
-        print(f"   🧹 Cleaned up after IMERG processing")
     
     if download_results['chirps']:
-        available_mem = check_memory()
-        if available_mem and available_mem < 3500:  # Need at least 3.5GB for CHIRPS weights
-            print(f"   ⚠️ Warning: Only {available_mem:.0f}MB available, CHIRPS may fail")
-            print(f"   💡 Consider skipping CHIRPS or using lower resolution")
-        
-        print(f"   🔄 Starting CHIRPS processing (need ~3GB for new weights)")
-        chirps_data = load_and_regrid_chirps_optimized_v2(config, target_grid)
+        chirps_data = load_and_regrid_chirps_regional(config, target_grid)
+        gc.collect()
     
     regrid_time = time.time() - regrid_start
     
     # Step 3: Icechunk
-    print("\n🧊 STEP 3: Memory-Optimized Icechunk Creation")
+    print("\n🧊 STEP 3: Icechunk Creation")
     icechunk_start = time.time()
     
     success, dataset_size = create_icechunk_dataset_optimized(config, pet_data, imerg_data, chirps_data)
@@ -764,7 +743,7 @@ def main(target_date, lat_bounds=(-12.0, 24.2), lon_bounds=(22.9, 51.6), resolut
     
     # Summary
     print("\n" + "=" * 80)
-    print("🎉 MEMORY-OPTIMIZED WORKFLOW v2 COMPLETE")
+    print("🎉 REGIONAL WORKFLOW v3 COMPLETE")
     print("=" * 80)
     
     if success:
@@ -783,11 +762,9 @@ def main(target_date, lat_bounds=(-12.0, 24.2), lon_bounds=(22.9, 51.6), resolut
         weight_files = list(Path(config['WEIGHTS_DIR']).glob('*.nc'))
         if weight_files:
             total_cache_size = sum(f.stat().st_size for f in weight_files) / (1024**2)
-            print(f"💾 Regridder cache: {len(weight_files)} files, {total_cache_size:.1f} MB")
+            print(f"💾 Regional regridder cache: {len(weight_files)} files, {total_cache_size:.1f} MB")
         
-        # Final memory check
         check_memory()
-        
         return True, dataset_size
     else:
         print("❌ Workflow failed")
@@ -795,16 +772,15 @@ def main(target_date, lat_bounds=(-12.0, 24.2), lon_bounds=(22.9, 51.6), resolut
 
 # Example usage
 if __name__ == "__main__":
-    # Example: Process July 22, 2025 with memory optimization
+    # Example: Process July 22, 2025 with regional regridding
     target_date = datetime(2025, 7, 22)
     
-    # Try different resolutions if memory is limited
-    resolutions = [0.02, 0.01]  # Start with 0.02° if 0.01° fails
+    # Try different resolutions
+    resolutions = [0.02, 0.01]
     
     for resolution in resolutions:
         print(f"\n🧪 Attempting {resolution}° resolution...")
         try:
-            # Check if this is being run as a script with skip_download option
             skip_download = len(sys.argv) > 1 and '--skip-download' in sys.argv
             success, size = main(target_date, resolution=resolution, skip_download=skip_download)
             if success:
