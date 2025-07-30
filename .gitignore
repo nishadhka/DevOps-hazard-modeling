@@ -1,4 +1,7 @@
 # Data directories
+geosfm/env.txt 
+*.json
+*.txt
 data/
 */data/
 **/data/
