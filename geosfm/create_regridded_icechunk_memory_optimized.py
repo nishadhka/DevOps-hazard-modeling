@@ -388,7 +388,7 @@ def download_imerg_data_enhanced(config):
         # Mock credentials for now - user should provide these
         try:
             from dotenv import load_dotenv
-            load_dotenv()
+            load_dotenv("env.txt")
             username = os.getenv('imerg_username')
             password = os.getenv('imerg_password')
             
