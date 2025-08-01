@@ -1,8 +1,8 @@
-# Complete Climate Data Processing Workflow Documentation
+# Complete GeoSFM Input Processing Workflow Documentation
 
 ## Overview
 
-This document provides comprehensive documentation for the complete climate data processing workflow, from data download to parquet file upload. The workflow consists of two main scripts that work in sequence to process climate data for East Africa region.
+This document provides comprehensive documentation for the complete GeoSFM input processing workflow, from data download to hydrological model input file generation. The workflow consists of three main scripts that work in sequence to process hydrological input data for the GeoSFM hydrological modeling system in the East Africa region.
 
 ## Architecture Diagram
 
@@ -14,12 +14,14 @@ flowchart TD
     D --> E[Icechunk Regridded Zarr]
     E --> F[Shapefile Processing]
     F --> G[Flox Groupby Analysis]
-    G --> H[Long Table Generation]
-    H --> I[Parquet Upload to GCS]
+    G --> H[Lean Long Table Generation]
+    H --> I[Zone-wise Txt File Generation]
+    I --> J[GeoSFM Hydrological Model Input]
+    H --> K[Parquet Upload to GCS]
     
-    subgraph "Data Sources"
-        A1[CHIRPS-GEFS<br/>Precipitation]
-        A2[IMERG<br/>Precipitation] 
+    subgraph "Hydrological Input Data Sources"
+        A1[CHIRPS-GEFS<br/>Precipitation Forecasts]
+        A2[IMERG<br/>Precipitation Observations] 
         A3[PET<br/>Evapotranspiration]
     end
     
@@ -35,11 +37,23 @@ flowchart TD
         D2 --> E1[Unified Icechunk Zarr]
     end
     
-    subgraph "Script 2: flox_shapefile_groupby_processor.py"
+    subgraph "Script 2: flox_shapefile_groupby_processor_v3.py"
         F --> F1[Shapefile to TIFF Conversion]
         F1 --> G1[Zone-based Aggregation]
-        G1 --> H1[CSV Export]
-        H1 --> I1[GCS/Parquet Upload]
+        G1 --> H1[Lean Long Table Export]
+        H1 --> K1[GCS/Parquet Upload]
+    end
+    
+    subgraph "Script 3: zone_wise_txt_generator_v3.py"
+        H --> I1[🔒 Load Existing Headers]
+        I1 --> I2[Preserve Hydrological Ordering]
+        I2 --> I3[Map Hydrological Data to Zones]
+        I3 --> I4[Generate rain.txt Files]
+        I3 --> I5[Generate evap.txt Files]
+        I4 --> J1[Zone1-Zone6 Rain Data]
+        I5 --> J2[Zone1-Zone6 Evap Data]
+        J1 --> J
+        J2 --> J
     end
 ```
 
@@ -50,7 +64,7 @@ flowchart TD
 **File:** `create_regridded_icechunk_memory_optimized_v9.py`
 
 #### Purpose
-Downloads climate data from multiple sources, processes them into a unified format, and creates regridded icechunk zarr datasets optimized for analysis.
+Downloads hydrological input data from multiple sources, processes them into a unified format, and creates regridded icechunk zarr datasets optimized for analysis.
 
 #### Key Features
 - **Multi-source data integration**: CHIRPS-GEFS, IMERG, PET
@@ -216,10 +230,10 @@ Data variables:
 
 ### 2. Flox Groupby Processing Script
 
-**File:** `flox_shapefile_groupby_processor.py`
+**File:** `flox_shapefile_groupby_processor_v3.py`
 
 #### Purpose
-Processes the regridded icechunk zarr data through spatial aggregation based on administrative zones, producing analysis-ready datasets in long table format.
+Processes the regridded icechunk zarr data through spatial aggregation based on administrative zones, producing analysis-ready datasets in lean long table format optimized for GeoSFM hydrological modeling input processing.
 
 #### Key Features
 - **Shapefile to raster conversion**: Creates zone masks at target resolution
@@ -436,7 +450,7 @@ python flox_shapefile_groupby_processor.py --create-tiff --use-dask --upload-gcs
 python flox_shapefile_groupby_processor.py \
   --use-dask \
   --upload-gcs \
-  --gcs-bucket your-climate-data-bucket
+  --gcs-bucket your-geosfm-data-bucket
 ```
 
 #### Output Data Structure
@@ -451,14 +465,258 @@ time,zones,band,spatial_ref,chirps_gefs_precipitation,variable,imerg_precipitati
 ```
 
 **Column Descriptions:**
-- `time`: Temporal dimension (datetime)
-- `zones`: Administrative zone ID (numeric)
-- `band`, `spatial_ref`: Raster metadata
-- `{variable_name}`: Climate variable values (float)
-- `variable`: Variable identifier (string)
-- `processed_at`: Processing timestamp
-- `processing_method`: Aggregation method used
-- `pixel_size`: Spatial resolution used
+- `gtime`: GeoSFM model time in YYYYMMDDTHH format
+- `zones_id`: Administrative zone ID (numeric)
+- `variable`: Encoded variable type (1=IMERG, 2=PET, 3=CHIRPS-GEFS)
+- `mean_value`: Hydrological variable measurement (float)
+- `processed_at`: Processing timestamp in YYYYMMDDTHH format
+
+---
+
+### 3. Zone-wise Txt File Generator Script
+
+**File:** `zone_wise_txt_generator_v3.py`
+
+#### Purpose
+🚨 **CRITICAL HYDROLOGICAL COMPONENT**: Converts lean long table format data into zone-specific txt files required by the GeoSFM hydrological model. This script preserves the essential river/stream network topology ordering that is crucial for accurate hydrological simulations.
+
+#### Key Features
+- **🔒 Hydrological Ordering Preservation**: Maintains existing Header Row ordering from zone files
+- **Variable Zone Size Support**: Handles zones with different spatial unit counts (86-1619 units)
+- **Dynamic Header Loading**: Extracts headers from existing zone files to preserve topology
+- **Temporal Data Integration**: Combines IMERG observations + CHIRPS-GEFS forecasts for rainfall
+- **PET Replication**: Extends evapotranspiration data for forecast periods
+- **Historical Data Preservation**: Maintains existing time series while adding new data
+
+#### Critical Hydrological Requirements
+
+```python
+# 🚨 ABSOLUTE CONSTRAINT: Header ordering must never be changed
+class ZoneWiseTxtGenerator:
+    """Generator that preserves hydrological ordering for GeoSFM compatibility"""
+    
+    def load_existing_zone_header(self, zone: str) -> List[int]:
+        """CRITICAL: Load existing header to preserve river/stream topology"""
+        # Always extract from existing zone files - never generate new ordering
+        for file_path in search_paths:
+            if os.path.exists(file_path):
+                with open(file_path, 'r') as f:
+                    header_line = f.readline().strip()
+                    if header_line.startswith('NA,'):
+                        return [int(x) for x in header_line[3:].split(',')]
+        
+        # FAIL SAFE: Cannot proceed without existing header
+        logger.error("❌ No existing header found - hydrological model will break!")
+        return []
+```
+
+#### Zone Structure and Variable Sizes
+
+The GeoSFM model requires specific zone structures with variable spatial unit counts:
+
+| Zone | Spatial Units | File Structure |
+|------|---------------|----------------|
+| zone1 | 86 units | rain.txt, evap.txt |
+| zone2 | 254 units | rain.txt, evap.txt |
+| zone3 | 471 units | rain.txt, evap.txt |
+| zone4 | 390 units | rain.txt, evap.txt |
+| zone5 | 377 units | rain.txt, evap.txt |
+| zone6 | 1,619 units | rain.txt, evap.txt |
+
+#### File Format Specifications
+
+##### Header Row Format (Hydrological Ordering)
+```
+NA,44,46,50,14,53,58,15,18,62,25,69,26,70,28,73,52,76,30,55,61,8,54,79,5,33,64,82,4,23,27,81,65,48,60,42,9,63,32,37,36,24,16,3,86,39,85,17,47,71,84,29,45,31,77,72,74,35,12,49,43,67,22,34,56,57,19,59,20,41,78,83,1,80,68,75,66,11,51,2,21,7,6,13,40,38,10
+```
+
+- **🚨 CRITICAL**: This ordering represents river/stream network topology
+- **Source**: GRIDCODE values from shapefile in hydrological order
+- **Constraint**: Order MUST NEVER be changed or GeoSFM model will fail
+- **Variable Length**: Each zone has different header length based on spatial units
+
+##### Data Row Format
+```
+YYYYDDD,value1,value2,value3,...,valueN
+```
+
+- **Date Format**: Julian day format (YYYYDDD) converted from `gtime` (YYYYMMDDTHH)
+- **Values**: Hydrological measurements aligned to header ordering
+- **Variable Count**: N = spatial units in zone (not fixed - varies per zone)
+
+#### Processing Workflow Detail
+
+##### Step 1: 🔒 Header Preservation
+```python
+def create_zone_spatial_mapping(self):
+    """CRITICAL: Preserve existing hydrological ordering"""
+    
+    for zone in ['zone1', 'zone2', 'zone3', 'zone4', 'zone5', 'zone6']:
+        # Load existing header from zone files
+        existing_header = self.load_existing_zone_header(zone)
+        
+        if not existing_header:
+            logger.error(f"❌ Cannot process {zone} - no existing header!")
+            continue
+            
+        # Store header for hydrological ordering preservation
+        self.zone_headers[zone] = existing_header
+        self.zone_sizes[zone] = len(existing_header)
+        
+        # Create mapping: zones_id -> spatial_position using existing order
+        gridcode_to_zones_id = {}  # From shapefile
+        for spatial_position, gridcode in enumerate(existing_header):
+            if gridcode in gridcode_to_zones_id:
+                zones_id = gridcode_to_zones_id[gridcode]
+                mapping[zones_id] = spatial_position
+```
+
+##### Step 2: Hydrological Data Alignment
+```python
+def process_zone_data(self, zone: str, variable: int):
+    """Align hydrological input data to existing hydrological ordering"""
+    
+    # Get zone size and initialize array
+    zone_size = self.zone_sizes.get(zone, 0)
+    spatial_values = np.zeros(zone_size)
+    
+    # Map zones_id data to hydrological positions
+    for _, row in zone_data.iterrows():
+        zones_id = int(row['zones_id'])
+        mean_value = float(row['mean_value'])
+        
+        if zones_id in zone_mapping:
+            spatial_position = zone_mapping[zones_id]
+            if 0 <= spatial_position < zone_size:
+                spatial_values[spatial_position] = mean_value
+    
+    return spatial_values.tolist()
+```
+
+##### Step 3: Hydrological Variable Processing
+
+**Rainfall Data (rain.txt)**:
+- **Variable 1 (IMERG)**: Satellite precipitation observations (last 7 days)
+- **Variable 3 (CHIRPS-GEFS)**: Precipitation forecasts (current + future)
+- **Combination**: Sum IMERG + CHIRPS-GEFS for complete rainfall time series
+- **Time Source**: `gtime` column from lean table → Julian day format
+
+**Evapotranspiration Data (evap.txt)**:
+- **Variable 2 (PET)**: Potential evapotranspiration estimates
+- **Replication**: Duplicate single-day PET values for forecast period alignment
+- **Alignment**: Match forecast length with rainfall data
+
+##### Step 4: File Generation with Order Preservation
+```python
+def write_zone_file(self, file_path: str, header: List[int], 
+                   time_series: Dict[str, List[float]], zone: str):
+    """Write zone file preserving hydrological ordering"""
+    
+    zone_size = self.zone_sizes.get(zone, len(header))
+    
+    with open(file_path, 'w') as f:
+        # Write header (preserve exact order)
+        zone_header = header[:zone_size]
+        header_str = 'NA,' + ','.join(map(str, zone_header))
+        f.write(header_str + '\n')
+        
+        # Write time series (align to header positions)
+        for julian_date in sorted(time_series.keys()):
+            values = time_series[julian_date]
+            padded_values = (values + [0.0] * zone_size)[:zone_size]
+            row = [julian_date] + [f"{val:.1f}" if val > 0 else "0" for val in padded_values]
+            f.write(','.join(row) + '\n')
+```
+
+#### Usage Examples
+
+```bash
+# Basic zone file generation preserving hydrological ordering
+python zone_wise_txt_generator_v3.py \
+    --lean-table flox_output/flox_results_lean_long_table_v3_20250731.csv \
+    --shapefile geofsm-prod-all-zones-20240712.shp \
+    --output-dir zone_output \
+    --date-str 20250731
+
+# Process specific zones only
+python zone_wise_txt_generator_v3.py \
+    --lean-table flox_output/flox_results_lean_long_table_v3_20250731.csv \
+    --shapefile geofsm-prod-all-zones-20240712.shp \
+    --output-dir zone_output \
+    --date-str 20250731 \
+    --zones zone1,zone3,zone5
+
+# Update existing files preserving historical data
+python zone_wise_txt_generator_v3.py \
+    --lean-table flox_output/flox_results_lean_long_table_v3_20250731.csv \
+    --shapefile geofsm-prod-all-zones-20240712.shp \
+    --output-dir zone_output \
+    --date-str 20250731 \
+    --preserve-history
+```
+
+#### Output Structure for GeoSFM Model
+
+```
+zone_output/
+├── lt_stable_input_20250731/
+│   ├── zone1/
+│   │   ├── rain.txt    # 86 spatial units × time steps
+│   │   └── evap.txt    # 86 spatial units × time steps
+│   ├── zone2/
+│   │   ├── rain.txt    # 254 spatial units × time steps
+│   │   └── evap.txt    # 254 spatial units × time steps
+│   ├── zone3/
+│   │   ├── rain.txt    # 471 spatial units × time steps
+│   │   └── evap.txt    # 471 spatial units × time steps
+│   ├── zone4/
+│   │   ├── rain.txt    # 390 spatial units × time steps
+│   │   └── evap.txt    # 390 spatial units × time steps
+│   ├── zone5/
+│   │   ├── rain.txt    # 377 spatial units × time steps
+│   │   └── evap.txt    # 377 spatial units × time steps
+│   └── zone6/
+│       ├── rain.txt    # 1,619 spatial units × time steps
+│       └── evap.txt    # 1,619 spatial units × time steps
+```
+
+#### Quality Assurance and Validation
+
+```python
+# Hydrological ordering validation
+def validate_hydrological_ordering():
+    """Ensure header ordering matches existing files exactly"""
+    
+    for zone in ['zone1', 'zone2', 'zone3', 'zone4', 'zone5', 'zone6']:
+        # Load generated header
+        generated_header = generator.generate_zone_header(zone)
+        
+        # Load existing file header
+        with open(f"zone_output/existing/{zone}/rain.txt", 'r') as f:
+            existing_header = [int(x) for x in f.readline().strip()[3:].split(',')]
+        
+        # Critical validation
+        if generated_header != existing_header:
+            logger.error(f"❌ {zone}: HYDROLOGICAL ORDERING COMPROMISED!")
+            logger.error("   GeoSFM model WILL FAIL with incorrect ordering!")
+            return False
+        else:
+            logger.info(f"✅ {zone}: Hydrological ordering preserved perfectly")
+    
+    return True
+```
+
+#### Integration with GeoSFM Hydrological Model
+
+The generated zone files serve as direct input to the GeoSFM hydrological modeling system:
+
+1. **rain.txt files**: Provide precipitation forcing data (observations + forecasts)
+2. **evap.txt files**: Provide evapotranspiration forcing data
+3. **Header ordering**: Maintains river/stream network topology for flow routing
+4. **Temporal structure**: Historical data (2011+) for model stabilization + new forecasts
+5. **Spatial structure**: Zone-specific spatial units aligned to watershed boundaries
+
+**🚨 CRITICAL WARNING**: Any modification to the header ordering will break the GeoSFM hydrological model's flow routing algorithms and produce incorrect hydrological simulations.
 
 ---
 
@@ -484,7 +742,7 @@ micromamba install -p ./micromamba_dir -c conda-forge \
 #### Phase 1: Data Download and Processing
 
 ```bash
-# 1. Download and process climate data to icechunk zarr
+# 1. Download and process hydrological input data to icechunk zarr
 python create_regridded_icechunk_memory_optimized_v9.py
 
 # Expected outputs:
@@ -511,7 +769,7 @@ micromamba run -p ./micromamba_dir python flox_shapefile_groupby_processor.py
 python flox_shapefile_groupby_processor.py \
   --use-dask \
   --upload-gcs \
-  --gcs-bucket your-climate-data-bucket
+  --gcs-bucket your-geosfm-data-bucket
 
 # Additional outputs:
 # - GCS: gs://your-bucket/flox_results/flox_results_YYYYMMDD_HHMMSS.csv
@@ -657,4 +915,4 @@ correlations = df.groupby('zones').apply(
 )
 ```
 
-This comprehensive workflow provides a robust foundation for climate data analysis, from raw data acquisition through analysis-ready table generation, with scalability options for operational deployment.
+This comprehensive workflow provides a robust foundation for GeoSFM hydrological modeling input processing, from raw data acquisition through analysis-ready table generation, with scalability options for operational deployment.
