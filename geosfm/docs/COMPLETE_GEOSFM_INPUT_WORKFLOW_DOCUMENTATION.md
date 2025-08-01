@@ -236,7 +236,7 @@ Data variables:
 Processes the regridded icechunk zarr data through spatial aggregation based on administrative zones, producing analysis-ready datasets in lean long table format optimized for GeoSFM hydrological modeling input processing.
 
 #### Key Features
-- **Shapefile to raster conversion**: Creates zone masks at target resolution
+- **Geospatial data to raster conversion**: Creates zone masks at target resolution
 - **Flox-based aggregation**: Memory-efficient spatial statistics
 - **Coiled Dask integration**: Scalable distributed processing
 - **Multiple output formats**: CSV, Parquet, GCS upload
@@ -268,13 +268,13 @@ The script uses embedded configuration that can be overridden:
 ```python
 default_config = {
     # File paths
-    "shapefile_path": "geofsm-prod-all-zones-20240712.shp",
+    "shapefile_path": "geofsm-prod-all-zones-20240712_v2_simplfied.geojson",
     "zarr_path": "east_africa_regridded_20250722.zarr", 
     "output_dir": "flox_output",
     "tiff_output_path": "ea_geofsm_zones_002deg.tif",
     
     # Processing switches (True/False)
-    "create_tiff": True,                # Convert shapefile to TIFF
+    "create_tiff": True,                # Convert geospatial data to TIFF
     "load_zarr": True,                  # Load icechunk zarr dataset
     "run_flox_groupby": True,           # Perform spatial aggregation
     "convert_to_long_table": True,      # Create analysis-ready table
@@ -307,13 +307,13 @@ default_config = {
 
 #### Processing Workflow Detail
 
-##### Step 1: Shapefile to TIFF Conversion
+##### Step 1: Geospatial Data to TIFF Conversion
 
 ```python
 def create_tiff_from_shapefile(self) -> str:
     """Convert administrative zones to raster format"""
     
-    # 1. Load shapefile
+    # 1. Load geospatial data (shapefile or GeoJSON)
     gdf = gpd.read_file(self.config["shapefile_path"])
     
     # 2. Calculate raster dimensions
@@ -531,7 +531,7 @@ NA,44,46,50,14,53,58,15,18,62,25,69,26,70,28,73,52,76,30,55,61,8,54,79,5,33,64,8
 ```
 
 - **🚨 CRITICAL**: This ordering represents river/stream network topology
-- **Source**: GRIDCODE values from shapefile in hydrological order
+- **Source**: GRIDCODE values from geospatial data in hydrological order
 - **Constraint**: Order MUST NEVER be changed or GeoSFM model will fail
 - **Variable Length**: Each zone has different header length based on spatial units
 
@@ -564,7 +564,7 @@ def create_zone_spatial_mapping(self):
         self.zone_sizes[zone] = len(existing_header)
         
         # Create mapping: zones_id -> spatial_position using existing order
-        gridcode_to_zones_id = {}  # From shapefile
+        gridcode_to_zones_id = {}  # From geospatial data
         for spatial_position, gridcode in enumerate(existing_header):
             if gridcode in gridcode_to_zones_id:
                 zones_id = gridcode_to_zones_id[gridcode]
@@ -634,14 +634,14 @@ def write_zone_file(self, file_path: str, header: List[int],
 # Basic zone file generation preserving hydrological ordering
 python zone_wise_txt_generator_v3.py \
     --lean-table flox_output/flox_results_lean_long_table_v3_20250731.csv \
-    --shapefile geofsm-prod-all-zones-20240712.shp \
+    --shapefile geofsm-prod-all-zones-20240712_v2_simplfied.geojson \
     --output-dir zone_output \
     --date-str 20250731
 
 # Process specific zones only
 python zone_wise_txt_generator_v3.py \
     --lean-table flox_output/flox_results_lean_long_table_v3_20250731.csv \
-    --shapefile geofsm-prod-all-zones-20240712.shp \
+    --shapefile geofsm-prod-all-zones-20240712_v2_simplfied.geojson \
     --output-dir zone_output \
     --date-str 20250731 \
     --zones zone1,zone3,zone5
@@ -649,7 +649,7 @@ python zone_wise_txt_generator_v3.py \
 # Update existing files preserving historical data
 python zone_wise_txt_generator_v3.py \
     --lean-table flox_output/flox_results_lean_long_table_v3_20250731.csv \
-    --shapefile geofsm-prod-all-zones-20240712.shp \
+    --shapefile geofsm-prod-all-zones-20240712_v2_simplfied.geojson \
     --output-dir zone_output \
     --date-str 20250731 \
     --preserve-history
