@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Zone-Wise Txt File Generator
+Zone-Wise Txt File Generator v3
 
 This script converts lean long table format climate data from flox_shapefile_groupby_processor_v3.py
 into zone-specific txt files suitable for hydrological modeling workflows.
@@ -12,7 +12,10 @@ Features:
 - Supports 6-zone structure with variable spatial units per zone (86-1619 units)
 - Implements comprehensive data validation and quality control
 
-Based on ZONE_WISE_TXT_FILE_GENERATION_GUIDEv2.md specifications with variable zone sizes.
+Based on ZONE_WISE_TXT_FILE_GENERATION_GUIDEv3.md specifications.
+
+CRITICAL: Preserves existing Header Row ordering for hydrological model compatibility.
+The header ordering represents river/stream network topology and MUST NEVER be changed.
 """
 
 import os
@@ -63,6 +66,7 @@ class ZoneWiseTxtGenerator:
         # Data storage
         self.zone_spatial_mapping = {}
         self.zone_sizes = {}  # Track actual zone sizes
+        self.zone_headers = {}  # Store existing headers to preserve hydrological ordering
         self.lean_table_data = None
         self.shapefile_data = None
         
@@ -170,13 +174,15 @@ class ZoneWiseTxtGenerator:
     
     def create_zone_spatial_mapping(self) -> Dict[str, Dict[int, int]]:
         """
-        Create mapping from zones_id to spatial unit positions within each zone
-        Also tracks actual zone sizes (variable per zone)
+        🚨 CRITICAL: Create mapping preserving existing hydrological ordering
+        
+        This method creates spatial mappings that align with the existing header
+        ordering from zone files, ensuring hydrological model compatibility.
         
         Returns:
             Dict: Nested dict with zone -> {zones_id: spatial_position}
         """
-        logger.info("Creating zone spatial mapping")
+        logger.info("Creating zone spatial mapping with hydrological ordering preservation")
         
         if self.shapefile_data is None:
             raise ValueError("Shapefile data not loaded. Call load_shapefile_data() first.")
@@ -184,30 +190,50 @@ class ZoneWiseTxtGenerator:
         zone_mappings = {}
         
         for zone in ['zone1', 'zone2', 'zone3', 'zone4', 'zone5', 'zone6']:
-            # Filter data for this zone
+            # CRITICAL: Load existing header to preserve hydrological order
+            existing_header = self.load_existing_zone_header(zone)
+            
+            if not existing_header:
+                logger.error(f"❌ Cannot create mapping for {zone} - no existing header found!")
+                zone_mappings[zone] = {}
+                self.zone_sizes[zone] = 0
+                continue
+            
+            # Store the header for later use
+            self.zone_headers[zone] = existing_header
+            self.zone_sizes[zone] = len(existing_header)
+            
+            # Create mapping based on existing header order
+            # existing_header contains GRIDCODE values in hydrological order
+            # We need to map zones_id (from shapefile) to position in this order
+            
             zone_data = self.shapefile_data[self.shapefile_data['zone'] == zone].copy()
             
             if len(zone_data) == 0:
-                logger.warning(f"No data found for {zone}")
+                logger.warning(f"No shapefile data found for {zone}")
                 zone_mappings[zone] = {}
                 continue
             
-            # Sort by GRIDCODE to ensure consistent ordering
-            zone_data = zone_data.sort_values('GRIDCODE').reset_index(drop=True)
+            # Create GRIDCODE to zones_id mapping from shapefile
+            gridcode_to_zones_id = {}
+            for _, row in zone_data.iterrows():
+                gridcode_to_zones_id[int(row['GRIDCODE'])] = int(row['id'])
             
-            # Create mapping: zones_id -> spatial_position (0-based index)
+            # Create zones_id to spatial_position mapping using existing header order
             mapping = {}
-            for idx, row in zone_data.iterrows():
-                zones_id = int(row['id'])
-                spatial_position = idx
-                mapping[zones_id] = spatial_position
+            for spatial_position, gridcode in enumerate(existing_header):
+                if gridcode in gridcode_to_zones_id:
+                    zones_id = gridcode_to_zones_id[gridcode]
+                    mapping[zones_id] = spatial_position
+                else:
+                    logger.warning(f"GRIDCODE {gridcode} from header not found in shapefile for {zone}")
             
             zone_mappings[zone] = mapping
-            self.zone_sizes[zone] = len(mapping)
-            logger.info(f"{zone}: {len(mapping)} spatial units mapped")
+            logger.info(f"🔒 {zone}: {len(mapping)} spatial units mapped preserving hydrological order")
+            logger.info(f"   Header GRIDCODE order preserved: {existing_header[:5]}... (first 5)")
         
         # Log actual zone sizes (variable per zone)
-        logger.info("Actual zone sizes:")
+        logger.info("Zone sizes with hydrological ordering preserved:")
         for zone, size in self.zone_sizes.items():
             logger.info(f"  {zone}: {size} spatial units")
         
@@ -293,33 +319,74 @@ class ZoneWiseTxtGenerator:
         
         return time_series_data
     
+    def load_existing_zone_header(self, zone: str, base_output_dir: str = "zone_output") -> List[int]:
+        """
+        🚨 CRITICAL: Load existing zone header to preserve hydrological ordering
+        
+        This method extracts the header from existing zone files to maintain the
+        river/stream network topology ordering essential for GeoSFM hydrological model.
+        
+        Args:
+            zone: Zone identifier (zone1-zone6)
+            base_output_dir: Base directory containing existing zone files
+            
+        Returns:
+            List[int]: Existing header order (GRIDCODE values in hydrological order)
+        """
+        # Try to find existing zone file in various date directories
+        search_paths = [
+            f"{base_output_dir}/lt_stable_input_20250501/{zone}/rain.txt",
+            f"{base_output_dir}/lt_stable_input_20250501/{zone}/evap.txt",
+        ]
+        
+        # Also search for any other date directories
+        import glob
+        date_dirs = glob.glob(f"{base_output_dir}/lt_stable_input_*")
+        for date_dir in date_dirs:
+            search_paths.extend([
+                f"{date_dir}/{zone}/rain.txt",
+                f"{date_dir}/{zone}/evap.txt"
+            ])
+        
+        for file_path in search_paths:
+            if os.path.exists(file_path):
+                try:
+                    with open(file_path, 'r') as f:
+                        header_line = f.readline().strip()
+                        if header_line.startswith('NA,'):
+                            header_values = header_line[3:].split(',')
+                            header = [int(val) for val in header_values if val.strip()]
+                            logger.info(f"🔒 Loaded existing {zone} header with {len(header)} spatial units from {file_path}")
+                            logger.info(f"   Preserving hydrological ordering: first 5 = {header[:5]}")
+                            return header
+                except Exception as e:
+                    logger.warning(f"Failed to load header from {file_path}: {e}")
+                    continue
+        
+        logger.error(f"❌ Could not find existing header for {zone}. Hydrological ordering cannot be preserved!")
+        logger.error("   This will break the GeoSFM hydrological model functionality.")
+        return []
+        
     def generate_zone_header(self, zone: str) -> List[int]:
         """
-        Generate zone-specific header row with spatial unit identifiers
+        Generate zone-specific header row preserving hydrological ordering
         
         Args:
             zone: Zone identifier (zone1-zone6)
             
         Returns:
-            List[int]: Zone-specific spatial unit identifiers based on GRIDCODE
+            List[int]: Zone-specific spatial unit identifiers in hydrological order
         """
-        if self.shapefile_data is None:
-            logger.error("Shapefile data not loaded. Cannot generate zone-specific header.")
-            return []
+        # CRITICAL: Always use existing header to preserve hydrological ordering
+        if zone not in self.zone_headers:
+            existing_header = self.load_existing_zone_header(zone)
+            if existing_header:
+                self.zone_headers[zone] = existing_header
+            else:
+                logger.error(f"❌ Cannot generate header for {zone} - no existing reference found!")
+                return []
         
-        # Filter shapefile data for this zone
-        zone_data = self.shapefile_data[self.shapefile_data['zone'] == zone].copy()
-        
-        if len(zone_data) == 0:
-            logger.warning(f"No data found for {zone}")
-            return []
-        
-        # Sort by GRIDCODE and extract values for header
-        zone_data = zone_data.sort_values('GRIDCODE')
-        header = zone_data['GRIDCODE'].tolist()
-        
-        logger.info(f"Generated {zone} header with {len(header)} spatial units")
-        return header
+        return self.zone_headers[zone]
     
     def generate_header_row(self) -> List[int]:
         """
