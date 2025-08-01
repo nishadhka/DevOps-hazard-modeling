@@ -25,7 +25,7 @@ flowchart TD
         A3[PET<br/>Evapotranspiration]
     end
     
-    subgraph "Script 1: create_regridded_icechunk_memory_optimized_v9.py"
+    subgraph "Script 1: 01-get-regrid.py"
         B --> B1[CHIRPS-GEFS Download]
         B --> B2[IMERG Download]
         B --> B3[PET Download]
@@ -37,14 +37,14 @@ flowchart TD
         D2 --> E1[Unified Icechunk Zarr]
     end
     
-    subgraph "Script 2: flox_shapefile_groupby_processor_v3.py"
+    subgraph "Script 2: 02-flox-groupby.py"
         F --> F1[Shapefile to TIFF Conversion]
         F1 --> G1[Zone-based Aggregation]
         G1 --> H1[Lean Long Table Export]
         H1 --> K1[GCS/Parquet Upload]
     end
     
-    subgraph "Script 3: zone_wise_txt_generator_v3.py"
+    subgraph "Script 3: 03-zone-txt.py"
         H --> I1[🔒 Load Existing Headers]
         I1 --> I2[Preserve Hydrological Ordering]
         I2 --> I3[Map Hydrological Data to Zones]
@@ -61,7 +61,7 @@ flowchart TD
 
 ### 1. Data Download and Raw Processing Script
 
-**File:** `create_regridded_icechunk_memory_optimized_v9.py`
+**File:** `01-get-regrid.py`
 
 #### Purpose
 Downloads hydrological input data from multiple sources, processes them into a unified format, and creates regridded icechunk zarr datasets optimized for analysis.
@@ -194,13 +194,13 @@ def create_unified_regridded_icechunk(datasets_dict, config):
 
 ```bash
 # Full workflow (download + process)
-python create_regridded_icechunk_memory_optimized_v9.py
+python 01-get-regrid.py
 
 # Process existing downloaded data only
-python create_regridded_icechunk_memory_optimized_v9.py --skip-download
+python 01-get-regrid.py --skip-download
 
 # Custom date processing
-python create_regridded_icechunk_memory_optimized_v9.py --date 2025-07-25
+python 01-get-regrid.py --date 2025-07-25
 ```
 
 #### Output Structure
@@ -230,7 +230,7 @@ Data variables:
 
 ### 2. Flox Groupby Processing Script
 
-**File:** `flox_shapefile_groupby_processor_v3.py`
+**File:** `02-flox-groupby.py`
 
 #### Purpose
 Processes the regridded icechunk zarr data through spatial aggregation based on administrative zones, producing analysis-ready datasets in lean long table format optimized for GeoSFM hydrological modeling input processing.
@@ -441,13 +441,13 @@ def setup_dask_cluster(self) -> Optional[Client]:
 
 ```bash
 # Basic local processing
-micromamba run -p ./micromamba_dir python flox_shapefile_groupby_processor.py
+micromamba run -p ./micromamba_dir python 02-flox-groupby.py
 
 # Enable specific features
-python flox_shapefile_groupby_processor.py --create-tiff --use-dask --upload-gcs
+python 02-flox-groupby.py --create-tiff --use-dask --upload-gcs
 
 # Cloud processing with GCS upload
-python flox_shapefile_groupby_processor.py \
+python 02-flox-groupby.py \
   --use-dask \
   --upload-gcs \
   --gcs-bucket your-geosfm-data-bucket
@@ -475,7 +475,7 @@ time,zones,band,spatial_ref,chirps_gefs_precipitation,variable,imerg_precipitati
 
 ### 3. Zone-wise Txt File Generator Script
 
-**File:** `zone_wise_txt_generator_v3.py`
+**File:** `03-zone-txt.py`
 
 #### Purpose
 🚨 **CRITICAL HYDROLOGICAL COMPONENT**: Converts lean long table format data into zone-specific txt files required by the GeoSFM hydrological model. This script preserves the essential river/stream network topology ordering that is crucial for accurate hydrological simulations.
@@ -632,14 +632,14 @@ def write_zone_file(self, file_path: str, header: List[int],
 
 ```bash
 # Basic zone file generation preserving hydrological ordering
-python zone_wise_txt_generator_v3.py \
+python 03-zone-txt.py \
     --lean-table flox_output/flox_results_lean_long_table_v3_20250731.csv \
     --shapefile geofsm-prod-all-zones-20240712_v2_simplfied.geojson \
     --output-dir zone_output \
     --date-str 20250731
 
 # Process specific zones only
-python zone_wise_txt_generator_v3.py \
+python 03-zone-txt.py \
     --lean-table flox_output/flox_results_lean_long_table_v3_20250731.csv \
     --shapefile geofsm-prod-all-zones-20240712_v2_simplfied.geojson \
     --output-dir zone_output \
@@ -647,7 +647,7 @@ python zone_wise_txt_generator_v3.py \
     --zones zone1,zone3,zone5
 
 # Update existing files preserving historical data
-python zone_wise_txt_generator_v3.py \
+python 03-zone-txt.py \
     --lean-table flox_output/flox_results_lean_long_table_v3_20250731.csv \
     --shapefile geofsm-prod-all-zones-20240712_v2_simplfied.geojson \
     --output-dir zone_output \
@@ -743,7 +743,7 @@ micromamba install -p ./micromamba_dir -c conda-forge \
 
 ```bash
 # 1. Download and process hydrological input data to icechunk zarr
-python create_regridded_icechunk_memory_optimized_v9.py
+python 01-get-regrid.py
 
 # Expected outputs:
 # - east_africa_raw_20250722.zarr/          (Raw data)
@@ -755,7 +755,7 @@ python create_regridded_icechunk_memory_optimized_v9.py
 
 ```bash
 # 2. Run spatial aggregation analysis
-micromamba run -p ./micromamba_dir python flox_shapefile_groupby_processor.py
+micromamba run -p ./micromamba_dir python 02-flox-groupby.py
 
 # Expected outputs:
 # - flox_output/ea_geofsm_zones_002deg.tif  (Zone raster)
@@ -766,7 +766,7 @@ micromamba run -p ./micromamba_dir python flox_shapefile_groupby_processor.py
 
 ```bash
 # 3. Scale up with Dask cluster and upload to GCS
-python flox_shapefile_groupby_processor.py \
+python 02-flox-groupby.py \
   --use-dask \
   --upload-gcs \
   --gcs-bucket your-geosfm-data-bucket
@@ -813,7 +813,7 @@ Based on test runs with East Africa region data:
 4. **Download Failures**
    ```python
    # Use skip-download flag and manual download
-   python create_regridded_icechunk_memory_optimized_v9.py --skip-download
+   python 01-get-regrid.py --skip-download
    ```
 
 ### Data Quality Checks
