@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Memory-Optimized Complete workflow v9: Direct TIFF Download + Raw Zarr Creation
+01-get-regrid.py - GeoSFM Data Download and Regridding Script
+
+Memory-Optimized Complete workflow: Direct TIFF Download + Raw Zarr Creation
 Features:
-- REMOVES obstore method that was showing empty arrays
 - Direct TIFF download using plain requests for CHIRPS-GEFS
 - Creates raw zarr files for each dataset subset to East Africa region
 - Updated East Africa extent: -12 to 23°N latitude, 21 to 53°E longitude  
@@ -11,8 +12,8 @@ Features:
 - All datasets subset to larger East Africa extent before processing
 
 Usage:
-  python create_regridded_icechunk_memory_optimized_v9.py                  # Download + process
-  python create_regridded_icechunk_memory_optimized_v9.py --skip-download  # Only process existing data
+  python 01-get-regrid.py --date-str 20250722                  # Download + process for specific date
+  python 01-get-regrid.py --date-str 20250722 --skip-download  # Only process existing data
 """
 
 import sys
@@ -20,6 +21,7 @@ import os
 import time
 import shutil
 import gc
+import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
 import pandas as pd
@@ -388,7 +390,7 @@ def download_imerg_data_enhanced(config):
         # Mock credentials for now - user should provide these
         try:
             from dotenv import load_dotenv
-            load_dotenv("env.txt")
+            load_dotenv()
             username = os.getenv('imerg_username')
             password = os.getenv('imerg_password')
             
@@ -1148,16 +1150,77 @@ def main(target_date,
         return False, 0
 
 
-# Example usage
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(
+        description="Download and regrid hydrological input data for GeoSFM model"
+    )
+    
+    parser.add_argument(
+        "--date-str", 
+        type=str, 
+        required=True,
+        help="Date string in YYYYMMDD format (e.g., 20250722)"
+    )
+    
+    parser.add_argument(
+        "--skip-download", 
+        action="store_true",
+        help="Skip download phase and only process existing data"
+    )
+    
+    parser.add_argument(
+        "--lat-bounds", 
+        type=float,
+        nargs=2,
+        default=(-12.0, 23.0),
+        help="Latitude bounds (min max) for East Africa region"
+    )
+    
+    parser.add_argument(
+        "--lon-bounds", 
+        type=float,
+        nargs=2,
+        default=(21.0, 53.0),
+        help="Longitude bounds (min max) for East Africa region"
+    )
+    
+    parser.add_argument(
+        "--resolution", 
+        type=float,
+        default=0.02,
+        help="Target grid resolution in degrees"
+    )
+    
+    return parser.parse_args()
+
+# Main execution
 if __name__ == "__main__":
-    # Process target date with v9 workflow
-    target_date = datetime(2025, 7, 22) 
+    args = parse_args()
+    
+    # Parse date string to datetime object
+    try:
+        target_date = datetime.strptime(args.date_str, '%Y%m%d')
+    except ValueError as e:
+        print(f"❌ Invalid date format '{args.date_str}'. Use YYYYMMDD format (e.g., 20250722)")
+        sys.exit(1)
+    
+    print(f"Processing date: {target_date.strftime('%Y-%m-%d')}")
+    print(f"Skip download: {args.skip_download}")
+    print(f"Latitude bounds: {args.lat_bounds}")
+    print(f"Longitude bounds: {args.lon_bounds}")
+    print(f"Resolution: {args.resolution}°")
 
     try:
-        skip_download = len(sys.argv) > 1 and '--skip-download' in sys.argv
-        success, total_size = main(target_date, skip_download=skip_download)
+        success, total_size = main(
+            target_date, 
+            lat_bounds=tuple(args.lat_bounds),
+            lon_bounds=tuple(args.lon_bounds),
+            resolution=args.resolution,
+            skip_download=args.skip_download
+        )
         if success:
-            print(f"\n🎯 Success with v9 workflow!")
+            print(f"\n🎯 Success with 01-get-regrid.py!")
             print(f"Raw zarr location: ./east_africa_raw_{target_date.strftime('%Y%m%d')}.zarr")
             print(f"Regridded icechunk location: ./east_africa_regridded_{target_date.strftime('%Y%m%d')}.zarr")
             print(f"Total dataset size: {total_size / (1024*1024):.2f} MB")

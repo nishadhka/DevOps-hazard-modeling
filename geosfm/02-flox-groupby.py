@@ -105,7 +105,7 @@ class FloxProcessorV3:
     def load_config(self, config_path: Optional[str] = None) -> Dict:
         """Load configuration - embedded defaults or from file"""
         # Date string for consistent file naming
-        date_str = "20250730"
+        date_str = "20250801"
         
         default_config = {
             # Date configuration

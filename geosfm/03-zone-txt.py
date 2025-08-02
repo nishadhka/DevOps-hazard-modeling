@@ -23,6 +23,8 @@ import sys
 import json
 import logging
 import argparse
+import shutil
+import re
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional, Union
@@ -140,18 +142,18 @@ class ZoneWiseTxtGenerator:
     
     def load_shapefile_data(self, shapefile_path: str) -> gpd.GeoDataFrame:
         """
-        Load and process shapefile for zone spatial mapping
+        Load and process geospatial data (shapefile or GeoJSON) for zone spatial mapping
         
         Args:
-            shapefile_path: Path to shapefile with zone definitions
+            shapefile_path: Path to geospatial file with zone definitions (shapefile or GeoJSON)
             
         Returns:
-            gpd.GeoDataFrame: Processed shapefile data
+            gpd.GeoDataFrame: Processed geospatial data
         """
-        logger.info(f"Loading shapefile data from: {shapefile_path}")
+        logger.info(f"Loading geospatial data from: {shapefile_path}")
         
         try:
-            # Load shapefile
+            # Load geospatial file (supports shapefile, GeoJSON, etc.)
             gdf = gpd.read_file(shapefile_path)
             
             # Validate required columns
@@ -159,9 +161,9 @@ class ZoneWiseTxtGenerator:
             missing_columns = [col for col in required_columns if col not in gdf.columns]
             
             if missing_columns:
-                raise ValueError(f"Missing required shapefile columns: {missing_columns}")
+                raise ValueError(f"Missing required geospatial file columns: {missing_columns}")
             
-            logger.info(f"Loaded shapefile with {len(gdf)} polygons")
+            logger.info(f"Loaded geospatial file with {len(gdf)} polygons")
             logger.info(f"Zones present: {sorted(gdf['zone'].unique())}")
             logger.info(f"GRIDCODE range: {gdf['GRIDCODE'].min()} to {gdf['GRIDCODE'].max()}")
             
@@ -169,7 +171,7 @@ class ZoneWiseTxtGenerator:
             return gdf
             
         except Exception as e:
-            logger.error(f"Failed to load shapefile data: {e}")
+            logger.error(f"Failed to load geospatial data: {e}")
             raise
     
     def create_zone_spatial_mapping(self) -> Dict[str, Dict[int, int]]:
@@ -185,7 +187,7 @@ class ZoneWiseTxtGenerator:
         logger.info("Creating zone spatial mapping with hydrological ordering preservation")
         
         if self.shapefile_data is None:
-            raise ValueError("Shapefile data not loaded. Call load_shapefile_data() first.")
+            raise ValueError("Geospatial data not loaded. Call load_shapefile_data() first.")
         
         zone_mappings = {}
         
@@ -210,11 +212,11 @@ class ZoneWiseTxtGenerator:
             zone_data = self.shapefile_data[self.shapefile_data['zone'] == zone].copy()
             
             if len(zone_data) == 0:
-                logger.warning(f"No shapefile data found for {zone}")
+                logger.warning(f"No geospatial data found for {zone}")
                 zone_mappings[zone] = {}
                 continue
             
-            # Create GRIDCODE to zones_id mapping from shapefile
+            # Create GRIDCODE to zones_id mapping from geospatial data
             gridcode_to_zones_id = {}
             for _, row in zone_data.iterrows():
                 gridcode_to_zones_id[int(row['GRIDCODE'])] = int(row['id'])
@@ -226,7 +228,7 @@ class ZoneWiseTxtGenerator:
                     zones_id = gridcode_to_zones_id[gridcode]
                     mapping[zones_id] = spatial_position
                 else:
-                    logger.warning(f"GRIDCODE {gridcode} from header not found in shapefile for {zone}")
+                    logger.warning(f"GRIDCODE {gridcode} from header not found in geospatial data for {zone}")
             
             zone_mappings[zone] = mapping
             logger.info(f"🔒 {zone}: {len(mapping)} spatial units mapped preserving hydrological order")
@@ -239,6 +241,106 @@ class ZoneWiseTxtGenerator:
         
         self.zone_spatial_mapping = zone_mappings
         return zone_mappings
+    
+    def extract_date_from_filename(self, lean_table_path: str) -> str:
+        """
+        Extract date from flox results filename
+        
+        Args:
+            lean_table_path: Path to lean table CSV file
+            
+        Returns:
+            str: Extracted date string (YYYYMMDD)
+        """
+        filename = os.path.basename(lean_table_path)
+        
+        # Pattern to match date in filename (e.g., flox_results_lean_long_table_v3_20250731.csv)
+        date_pattern = r'(\d{8})'
+        match = re.search(date_pattern, filename)
+        
+        if match:
+            extracted_date = match.group(1)
+            logger.info(f"Extracted date from filename: {extracted_date}")
+            return extracted_date
+        else:
+            logger.warning(f"Could not extract date from filename: {filename}")
+            # Fallback to current date
+            fallback_date = datetime.now().strftime('%Y%m%d')
+            logger.warning(f"Using fallback date: {fallback_date}")
+            return fallback_date
+    
+    def copy_existing_zone_structure(self, source_base_dir: str, target_base_dir: str, 
+                                   source_date: str, target_date: str) -> bool:
+        """
+        Copy existing zone folder structure to new date-specific folder
+        
+        Args:
+            source_base_dir: Base output directory (e.g., 'zone_output')
+            target_base_dir: Base output directory (same as source)
+            source_date: Source date string for folder name (e.g., '20250501')
+            target_date: Target date string for folder name (e.g., '20250731')
+            
+        Returns:
+            bool: True if copy successful, False otherwise
+        """
+        source_dir = os.path.join(source_base_dir, f"lt_stable_input_{source_date}")
+        target_dir = os.path.join(target_base_dir, f"lt_stable_input_{target_date}")
+        
+        if not os.path.exists(source_dir):
+            logger.warning(f"Source directory does not exist: {source_dir}")
+            logger.info("Will create new folder structure from scratch")
+            return False
+        
+        if os.path.exists(target_dir):
+            logger.warning(f"Target directory already exists: {target_dir}")
+            logger.info("Will use existing target directory")
+            return True
+        
+        try:
+            logger.info(f"Copying folder structure from {source_dir} to {target_dir}")
+            shutil.copytree(source_dir, target_dir)
+            logger.info(f"Successfully copied zone structure to {target_dir}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to copy folder structure: {e}")
+            logger.info("Will create new folder structure from scratch")
+            return False
+    
+    def find_latest_zone_folder(self, base_dir: str) -> Optional[str]:
+        """
+        Find the most recent zone folder to use as source for copying
+        
+        Args:
+            base_dir: Base output directory
+            
+        Returns:
+            str: Latest date string found, or None if no folders exist
+        """
+        import glob
+        
+        pattern = os.path.join(base_dir, "lt_stable_input_*")
+        folders = glob.glob(pattern)
+        
+        if not folders:
+            logger.warning(f"No existing zone folders found in {base_dir}")
+            return None
+        
+        # Extract dates from folder names and find latest
+        dates = []
+        for folder in folders:
+            folder_name = os.path.basename(folder)
+            if folder_name.startswith("lt_stable_input_"):
+                date_part = folder_name.replace("lt_stable_input_", "")
+                if len(date_part) == 8 and date_part.isdigit():
+                    dates.append(date_part)
+        
+        if dates:
+            latest_date = max(dates)
+            logger.info(f"Found latest zone folder: lt_stable_input_{latest_date}")
+            return latest_date
+        
+        logger.warning("No valid date folders found")
+        return None
     
     def convert_gtime_to_julian(self, gtime_str: str) -> str:
         """
@@ -267,7 +369,7 @@ class ZoneWiseTxtGenerator:
             variable: Variable code (1, 2, or 3)
             
         Returns:
-            Dict: Mapping of julian_date -> list of 87 spatial values
+            Dict: Mapping of julian_date -> list of spatial values (zone-specific count)
         """
         if self.lean_table_data is None:
             raise ValueError("Lean table data not loaded")
@@ -395,14 +497,14 @@ class ZoneWiseTxtGenerator:
         Returns:
             List[int]: All spatial unit identifiers
         """
-        # Generate dynamic header based on shapefile GRIDCODE values
+        # Generate dynamic header based on geospatial data GRIDCODE values
         # This returns all GRIDCODE values across all zones
         if self.shapefile_data is not None:
-            # Use actual GRIDCODE values from shapefile for consistency
+            # Use actual GRIDCODE values from geospatial data for consistency
             header = sorted(self.shapefile_data['GRIDCODE'].unique().tolist())
-            logger.info(f"Generated dynamic header with {len(header)} spatial units from shapefile")
+            logger.info(f"Generated dynamic header with {len(header)} spatial units from geospatial data")
         else:
-            # Fallback to example pattern if shapefile not loaded
+            # Fallback to example pattern if geospatial data not loaded
             header = [
                 44, 46, 50, 14, 53, 58, 15, 18, 62, 25, 69, 26, 70, 28, 73, 52, 76, 30, 55, 61,
                 8, 54, 79, 5, 33, 64, 82, 4, 23, 27, 81, 65, 48, 60, 42, 9, 63, 32, 37, 36,
@@ -410,7 +512,7 @@ class ZoneWiseTxtGenerator:
                 67, 22, 34, 56, 57, 19, 59, 20, 41, 78, 83, 1, 80, 68, 75, 66, 11, 51, 2, 21,
                 7, 6, 13, 40, 38, 10
             ]
-            logger.warning("Using fallback header pattern - shapefile not loaded")
+            logger.warning("Using fallback header pattern - geospatial data not loaded")
         
         return header
     
@@ -457,7 +559,16 @@ class ZoneWiseTxtGenerator:
                     continue
                 
                 julian_date = parts[0]
-                values = [float(val) if val else 0.0 for val in parts[1:]]
+                # Handle 'NA' values and empty values
+                values = []
+                for val in parts[1:]:
+                    if val.strip() == '' or val.strip().upper() == 'NA':
+                        values.append(0.0)
+                    else:
+                        try:
+                            values.append(float(val))
+                        except ValueError:
+                            values.append(0.0)
                 
                 # Ensure correct number of values based on expected zone structure
                 # Note: Variable zone sizes, not fixed at 87
@@ -614,10 +725,12 @@ class ZoneWiseTxtGenerator:
         
         # Combine IMERG and CHIRPS-GEFS data
         rain_new_data = {}
+        zone_size = self.zone_sizes.get(zone, 0)
+        
         for date in sorted(set(list(imerg_data.keys()) + list(chirps_data.keys()))):
             # Combine values from both sources (sum precipitation)
-            imerg_vals = np.array(imerg_data.get(date, [0.0] * 87))
-            chirps_vals = np.array(chirps_data.get(date, [0.0] * 87))
+            imerg_vals = np.array(imerg_data.get(date, [0.0] * zone_size))
+            chirps_vals = np.array(chirps_data.get(date, [0.0] * zone_size))
             combined_vals = imerg_vals + chirps_vals
             rain_new_data[date] = combined_vals.tolist()
         
@@ -675,16 +788,16 @@ class ZoneWiseTxtGenerator:
         logger.info(f"Completed processing {zone}")
     
     def generate_zone_files(self, lean_table_path: str, shapefile_path: str, 
-                          output_dir: str, date_str: str, zones: Optional[List[str]] = None,
+                          output_dir: str, date_str: str = None, zones: Optional[List[str]] = None,
                           preserve_history: bool = True):
         """
         Main method to generate zone-wise txt files
         
         Args:
             lean_table_path: Path to lean table CSV file
-            shapefile_path: Path to shapefile with zone definitions
+            shapefile_path: Path to geospatial file with zone definitions (shapefile or GeoJSON)
             output_dir: Base output directory
-            date_str: Date string for output directory naming
+            date_str: Date string for output directory naming (if None, extract from filename)
             zones: List of specific zones to process (default: all zones)
             preserve_history: Whether to preserve historical data
         """
@@ -695,6 +808,28 @@ class ZoneWiseTxtGenerator:
         start_time = datetime.now()
         
         try:
+            # Extract date from filename if not provided
+            if date_str is None:
+                date_str = self.extract_date_from_filename(lean_table_path)
+            
+            logger.info(f"Using date: {date_str}")
+            
+            # Find latest existing folder to copy from
+            latest_source_date = self.find_latest_zone_folder(output_dir)
+            
+            # Copy existing folder structure if available
+            if latest_source_date and latest_source_date != date_str:
+                logger.info(f"Copying existing structure from {latest_source_date} to {date_str}")
+                copy_success = self.copy_existing_zone_structure(
+                    output_dir, output_dir, latest_source_date, date_str
+                )
+                if copy_success:
+                    logger.info("✓ Successfully copied existing folder structure")
+                else:
+                    logger.info("Will create new folder structure")
+            else:
+                logger.info("No existing folder to copy or target already exists")
+            
             # Load input data
             self.load_lean_table_data(lean_table_path)
             self.load_shapefile_data(shapefile_path)
@@ -759,7 +894,7 @@ def main():
         "--shapefile", 
         type=str, 
         required=True,
-        help="Path to shapefile with zone definitions"
+        help="Path to geospatial file with zone definitions (shapefile or GeoJSON)"
     )
     
     parser.add_argument(
@@ -772,8 +907,8 @@ def main():
     parser.add_argument(
         "--date-str", 
         type=str, 
-        required=True,
-        help="Date string for output directory naming (YYYYMMDD)"
+        required=False,
+        help="Date string for output directory naming (YYYYMMDD). If not provided, will extract from lean-table filename"
     )
     
     parser.add_argument(

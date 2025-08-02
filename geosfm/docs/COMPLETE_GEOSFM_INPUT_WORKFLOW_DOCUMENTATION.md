@@ -69,7 +69,7 @@ Downloads hydrological input data from multiple sources, processes them into a u
 #### Key Features
 - **Multi-source data integration**: CHIRPS-GEFS, IMERG, PET
 - **Memory-optimized processing**: Handles large datasets efficiently
-- **Spatial regridding**: Unifies different resolutions to 0.01° grid
+- **Spatial regridding**: Unifies different resolutions to 0.02° grid
 - **Temporal alignment**: Synchronizes data across time dimensions
 - **East Africa focus**: Spatial subsetting to region of interest
 
@@ -81,7 +81,7 @@ config = {
     'TARGET_DATE': datetime(2025, 7, 22),  # Processing date
     'LAT_BOUNDS': (-12.0, 23.0),          # Latitude range
     'LON_BOUNDS': (21.0, 53.0),           # Longitude range  
-    'TARGET_RESOLUTION': 0.01,            # Target grid resolution (degrees)
+    'TARGET_RESOLUTION': 0.02,            # Target grid resolution (degrees)
     'OUTPUT_DIR': "./20250722",           # Temporary download directory
     'RAW_ZARR_DIR': "./east_africa_raw_20250722.zarr",      # Raw zarr output
     'ICECHUNK_PATH': "./east_africa_regridded_20250722.zarr", # Final output
@@ -138,6 +138,8 @@ def download_chirps_gefs_data(config):
 
 #### Memory Optimization Strategies
 
+**⚠️ Important Note on Resolution**: The current implementation uses **0.02° resolution** due to memory constraints. Attempting to use 0.01° resolution causes memory issues and process termination during regridding operations on typical hardware configurations.
+
 ```python
 def memory_optimized_processing():
     """Key memory optimization techniques used"""
@@ -157,6 +159,24 @@ def memory_optimized_processing():
     ds = xr.open_zarr(path, chunks='auto')
 ```
 
+**Resolution Trade-offs**:
+
+*Grid calculations for East Africa region (-12°S to 23°N, 21°E to 53°E):*
+- **Latitude range**: 35.0° (23.0 - (-12.0))
+- **Longitude range**: 32.0° (53.0 - 21.0)
+
+- **0.01° resolution**: 3,501 x 3,201 = 11.2M grid points per layer
+  - Calculation: `int(35.0/0.01) + 1 = 3,501` lat points × `int(32.0/0.01) + 1 = 3,201` lon points
+  - Memory requirement: ~45 MB per variable per time step (11.2M × 4 bytes)
+  - **Issue**: Causes memory exhaustion during regridding operations
+  - **Status**: Currently not feasible without significant hardware upgrades
+  
+- **0.02° resolution**: 1,751 x 1,601 = 2.8M grid points per layer  
+  - Calculation: `int(35.0/0.02) + 1 = 1,751` lat points × `int(32.0/0.02) + 1 = 1,601` lon points
+  - Memory requirement: ~11 MB per variable per time step (2.8M × 4 bytes)
+  - **Status**: ✅ Working reliably with current hardware
+  - **Performance**: Stable processing without memory issues
+
 #### Spatial Regridding Process
 
 The script uses `xESMF` for conservative regridding:
@@ -165,7 +185,7 @@ The script uses `xESMF` for conservative regridding:
 def create_unified_regridded_icechunk(datasets_dict, config):
     """Create regridded icechunk with unified grid"""
     
-    # 1. Create target grid (0.01° resolution)
+    # 1. Create target grid (0.02° resolution)
     target_lat = np.arange(config['LAT_BOUNDS'][0], 
                           config['LAT_BOUNDS'][1] + config['TARGET_RESOLUTION'], 
                           config['TARGET_RESOLUTION'])
@@ -282,7 +302,7 @@ default_config = {
     "upload_to_gcs": False,             # Upload results to cloud
     
     # Spatial parameters
-    "pixel_size": 0.02,                 # TIFF resolution (degrees)
+    "pixel_size": 0.02,                 # TIFF resolution (degrees) - matches regridding
     "shapefile_id_column": "id",        # Zone identifier column
     "shapefile_zone_column": "zone",    # Zone name column
     
@@ -747,9 +767,11 @@ python 01-get-regrid.py
 
 # Expected outputs:
 # - east_africa_raw_20250722.zarr/          (Raw data)
-# - east_africa_regridded_20250722.zarr/    (Regridded unified data)
+# - east_africa_regridded_20250722.zarr/    (Regridded unified data at 0.02°)
 # - 20250722/                               (Temporary download directory)
 ```
+
+**⚠️ Memory Note**: The script uses 0.02° resolution by default. Using 0.01° resolution (via `--resolution 0.01`) will cause memory issues and process termination during regridding operations.
 
 #### Phase 2: Spatial Analysis
 
@@ -791,11 +813,15 @@ Based on test runs with East Africa region data:
 
 #### Common Issues and Solutions
 
-1. **Memory Errors**
+1. **Memory Errors / Process Killed**
    ```python
    # Reduce chunk sizes
    "chunk_size": {"time": 1, "lat": 250, "lon": 250}
+   
+   # Use 0.02° resolution instead of 0.01°
+   python 01-get-regrid.py --resolution 0.02
    ```
+   **⚠️ Critical**: Using 0.01° resolution causes memory exhaustion during regridding operations and process termination. The current hardware configuration cannot handle the ~32M+ grid points required for 0.01° resolution.
 
 2. **Alignment Errors**
    ```python
@@ -853,9 +879,14 @@ config = setup_config(
     target_date=datetime(2025, 7, 22),
     lat_bounds=(-5.0, 15.0),     # Custom latitude range
     lon_bounds=(30.0, 45.0),     # Custom longitude range  
-    resolution=0.05              # Coarser resolution
+    resolution=0.02              # 0.02° recommended (0.01° causes memory issues)
 )
 ```
+
+**⚠️ Resolution Constraints**: 
+- Use `resolution=0.02` (default) for reliable processing
+- Use `resolution=0.05` or higher for even lower memory usage
+- **Avoid** `resolution=0.01` due to memory limitations
 
 #### Multiple Statistical Methods
 
