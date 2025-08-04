@@ -416,11 +416,14 @@ def ftp_download_task(config):
         ftp = ftplib.FTP()
         ftp.connect(config["ftp_host"], config["ftp_port"])
         ftp.login(config["ftp_username"], config["ftp_password"])
+        
+        # Set to active mode to avoid firewall issues
+        ftp.set_pasv(False)
 
         if config["ftp_path"] and config["ftp_path"] != "/":
             ftp.cwd(config["ftp_path"])
 
-        logger.info("FTP authentication successful")
+        logger.info("FTP authentication successful (active mode)")
 
         # Discover target files
         logger.info("Discovering target hydrology data files...")
