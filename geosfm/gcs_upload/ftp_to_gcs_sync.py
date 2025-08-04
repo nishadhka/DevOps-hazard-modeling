@@ -49,24 +49,36 @@ class HydrologyDataSync:
 
     def setup_logging(self):
         """Configure logging system"""
-        logs_dir = Path("logs")
-        logs_dir.mkdir(exist_ok=True)
+        try:
+            logs_dir = Path("logs")
+            logs_dir.mkdir(exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_filename = logs_dir / f"hydrology_sync_{timestamp}.log"
+            
+            # Configure logging with both file and console output
+            logging.basicConfig(
+                level=logging.INFO,
+                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                handlers=[
+                    logging.FileHandler(log_filename, encoding="utf-8"),
+                    logging.StreamHandler(sys.stdout),
+                ],
+            )
+            
+            self.logger = logging.getLogger("HydrologyDataSync")
+            self.logger.info(f"Logging initialized - Log file: {log_filename}")
+            
+        except (PermissionError, OSError):
+            # In cloud environments, fall back to console-only logging
+            logging.basicConfig(
+                level=logging.INFO,
+                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                handlers=[logging.StreamHandler(sys.stdout)],
+            )
+            
+            self.logger = logging.getLogger("HydrologyDataSync")
+            self.logger.info("Logging initialized - Console only (cloud environment)")
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_filename = logs_dir / f"hydrology_sync_{timestamp}.log"
-
-        # Configure logging with both file and console output
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            handlers=[
-                logging.FileHandler(log_filename, encoding="utf-8"),
-                logging.StreamHandler(sys.stdout),
-            ],
-        )
-
-        self.logger = logging.getLogger("HydrologyDataSync")
-        self.logger.info(f"Logging initialized - Log file: {log_filename}")
         self.logger.info("Hydrology Data Sync v1.0.0 - Starting session")
 
     def setup_directories(self):
@@ -74,9 +86,20 @@ class HydrologyDataSync:
         required_dirs = ["logs", "downloads", "credentials"]
 
         for dir_name in required_dirs:
-            dir_path = Path(dir_name)
-            dir_path.mkdir(parents=True, exist_ok=True)
-            self.logger.debug(f"Directory verified: {dir_path}")
+            try:
+                dir_path = Path(dir_name)
+                dir_path.mkdir(parents=True, exist_ok=True)
+                self.logger.debug(f"Directory verified: {dir_path}")
+            except (PermissionError, OSError) as e:
+                # In cloud environments, we might not have write permissions
+                # Use temporary directory instead
+                import tempfile
+                temp_dir = Path(tempfile.gettempdir()) / dir_name
+                temp_dir.mkdir(parents=True, exist_ok=True)
+                self.logger.warning(f"Could not create {dir_path}, using {temp_dir}: {e}")
+                # Update the path for logs if needed
+                if dir_name == "logs" and not hasattr(self, 'logger'):
+                    self.logs_dir = temp_dir
 
     def load_configuration(self):
         """
