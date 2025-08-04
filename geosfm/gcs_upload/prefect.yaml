@@ -16,7 +16,7 @@ pull:
 
 # Work pool configuration
 work_pool:
-  name: " geosfm-cloud-pool"
+  name: "geosfm-cloud-pool"
   work_queue_name: "default"
 
 # Deployment definitions
@@ -27,11 +27,11 @@ deployments:
     description: "Daily midnight synchronization of hydrology data"
     
     # Entry point with relative path
-    entrypoint: "geosfm/gcs_upload/ftp_to_gcs_sync.py:hydrology_sync_flow"
+    entrypoint: "ftp_to_gcs_sync.py:hydrology_sync_flow"
     
     # Work pool for this deployment
     work_pool:
-      name: " geosfm-cloud-pool"
+      name: "geosfm-cloud-pool"
     
     # Scheduling - runs every day at midnight UTC
     schedule:
@@ -61,11 +61,11 @@ deployments:
     description: "On-demand hydrology data synchronization"
     
     # Entry point with relative path
-    entrypoint: "geosfm/gcs_upload/ftp_to_gcs_sync.py:hydrology_sync_flow"
+    entrypoint: "ftp_to_gcs_sync.py:hydrology_sync_flow"
     
     # Work pool for this deployment
     work_pool:
-      name: " geosfm-cloud-pool"
+      name: "geosfm-cloud-pool"
     
     # No schedule - manual trigger only
     schedule: null
