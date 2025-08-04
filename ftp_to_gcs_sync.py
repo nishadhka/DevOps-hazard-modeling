@@ -417,17 +417,31 @@ def ftp_download_task(config):
         ftp.connect(config["ftp_host"], config["ftp_port"])
         ftp.login(config["ftp_username"], config["ftp_password"])
         
-        # Set to active mode to avoid firewall issues
-        ftp.set_pasv(False)
+        # Set timeouts to prevent hanging
+        ftp.sock.settimeout(30)
+        
+        # Try passive mode first, fallback to active if it fails
+        try:
+            ftp.set_pasv(True)
+            logger.info("Using passive FTP mode")
+        except:
+            ftp.set_pasv(False)
+            logger.info("Fallback to active FTP mode")
 
         if config["ftp_path"] and config["ftp_path"] != "/":
             ftp.cwd(config["ftp_path"])
 
-        logger.info("FTP authentication successful (active mode)")
+        logger.info("FTP authentication successful")
 
-        # Discover target files
+        # Discover target files with timeout
         logger.info("Discovering target hydrology data files...")
-        all_files = ftp.nlst()
+        try:
+            all_files = ftp.nlst()
+        except Exception as e:
+            logger.warning(f"nlst() failed, trying alternative listing: {e}")
+            # Fallback to alternative listing method
+            all_files = []
+            ftp.retrlines('LIST', lambda line: all_files.append(line.split()[-1]) if line.split() else None)
 
         target_files = []
         for filename in all_files:
