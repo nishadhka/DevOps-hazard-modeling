@@ -106,11 +106,15 @@ jobs:
         prefect variable set gcs-prefix "${GCS_PREFIX:-hydrology_data}" --overwrite
         prefect variable set gcs-credentials "$GCS_CREDENTIALS" --overwrite
     
-    - name: Create work pool if needed
+    - name: List and create work pool if needed
       env:
         PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
         PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
       run: |
+        # List all work pools to see what exists
+        echo "Available work pools:"
+        prefect work-pool ls
+        
         # Check if work pool exists, create if not
         if ! prefect work-pool ls | grep -q "geosfm-cloud-pool"; then
           echo "Creating work pool: geosfm-cloud-pool"
