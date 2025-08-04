@@ -412,36 +412,78 @@ def ftp_download_task(config):
         f"Establishing FTP connection to {config['ftp_host']}:{config['ftp_port']}"
     )
 
+    def connect_ftp_with_retry():
+        """Connect to FTP with multiple connection strategies"""
+        connection_strategies = [
+            # Strategy 1: Passive mode with short timeout
+            {"pasv": True, "timeout": 15},
+            # Strategy 2: Active mode with short timeout  
+            {"pasv": False, "timeout": 15},
+            # Strategy 3: Passive mode with longer timeout
+            {"pasv": True, "timeout": 60},
+        ]
+        
+        for i, strategy in enumerate(connection_strategies, 1):
+            try:
+                logger.info(f"FTP connection attempt {i}/3: pasv={strategy['pasv']}, timeout={strategy['timeout']}s")
+                
+                ftp = ftplib.FTP()
+                ftp.connect(config["ftp_host"], config["ftp_port"], timeout=strategy['timeout'])
+                ftp.login(config["ftp_username"], config["ftp_password"])
+                ftp.set_pasv(strategy['pasv'])
+                
+                if config["ftp_path"] and config["ftp_path"] != "/":
+                    ftp.cwd(config["ftp_path"])
+                
+                # Test connection with a simple command
+                ftp.pwd()
+                logger.info(f"FTP connection successful with strategy {i}")
+                return ftp
+                
+            except Exception as e:
+                logger.warning(f"FTP strategy {i} failed: {e}")
+                try:
+                    ftp.quit()
+                except:
+                    pass
+                if i == len(connection_strategies):
+                    raise e
+                continue
+    
     try:
-        ftp = ftplib.FTP()
-        ftp.connect(config["ftp_host"], config["ftp_port"])
-        ftp.login(config["ftp_username"], config["ftp_password"])
-        
-        # Set timeouts to prevent hanging
-        ftp.sock.settimeout(30)
-        
-        # Try passive mode first, fallback to active if it fails
-        try:
-            ftp.set_pasv(True)
-            logger.info("Using passive FTP mode")
-        except:
-            ftp.set_pasv(False)
-            logger.info("Fallback to active FTP mode")
+        ftp = connect_ftp_with_retry()
 
-        if config["ftp_path"] and config["ftp_path"] != "/":
-            ftp.cwd(config["ftp_path"])
-
-        logger.info("FTP authentication successful")
-
-        # Discover target files with timeout
+        # Discover target files with multiple methods
         logger.info("Discovering target hydrology data files...")
-        try:
-            all_files = ftp.nlst()
-        except Exception as e:
-            logger.warning(f"nlst() failed, trying alternative listing: {e}")
-            # Fallback to alternative listing method
-            all_files = []
-            ftp.retrlines('LIST', lambda line: all_files.append(line.split()[-1]) if line.split() else None)
+        all_files = []
+        
+        # Try different listing methods
+        listing_methods = [
+            ("nlst()", lambda: ftp.nlst()),
+            ("LIST parsing", lambda: [line.split()[-1] for line in ftp.nlst() if line.strip()]),
+        ]
+        
+        for method_name, method_func in listing_methods:
+            try:
+                logger.info(f"Trying {method_name}...")
+                all_files = method_func()
+                if all_files:
+                    logger.info(f"Successfully got file list using {method_name}")
+                    break
+            except Exception as e:
+                logger.warning(f"{method_name} failed: {e}")
+                continue
+        
+        if not all_files:
+            # Last resort: try to get files one by one using common patterns
+            logger.info("Trying pattern-based file discovery...")
+            patterns = config["file_patterns"]
+            for pattern in patterns:
+                try:
+                    test_files = ftp.nlst(f"*{pattern}*")
+                    all_files.extend(test_files)
+                except:
+                    pass
 
         target_files = []
         for filename in all_files:
