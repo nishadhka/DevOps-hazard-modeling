@@ -13,7 +13,6 @@ on:
 
 env:
   PYTHON_VERSION: '3.11'
-  PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
 
 jobs:
   test:
