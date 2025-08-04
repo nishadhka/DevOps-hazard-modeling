@@ -184,6 +184,12 @@ class HydrologyDataSync:
         try:
             # Handle GCS credentials - can be file path or JSON string
             gcs_creds = self.config["gcs_credentials"]
+            
+            self.logger.info(f"GCS credentials type: {type(gcs_creds)}, length: {len(gcs_creds)}")
+
+            if not gcs_creds or gcs_creds == '"{' or len(gcs_creds) < 10:
+                self.logger.error(f"GCS credentials appear incomplete or invalid: '{gcs_creds}'")
+                raise ValueError("GCS credentials are incomplete. Please check the 'gcs-credentials' Prefect variable contains the full service account JSON key.")
 
             if gcs_creds.startswith("/"):
                 # File path
@@ -197,14 +203,16 @@ class HydrologyDataSync:
                 try:
                     # Try to parse as JSON
                     credentials_info = json.loads(gcs_creds)
-                except json.JSONDecodeError:
-                    # Try fixing common issues (single quotes to double quotes)
-                    try:
-                        gcs_creds_fixed = gcs_creds.replace("'", '"')
-                        credentials_info = json.loads(gcs_creds_fixed)
-                    except json.JSONDecodeError:
-                        self.logger.error(f"Invalid JSON in GCS credentials. First 100 chars: {gcs_creds[:100]}")
-                        raise ValueError("GCS credentials must be valid JSON or a file path")
+                except json.JSONDecodeError as e:
+                    # Log the actual value for debugging
+                    self.logger.error(f"Failed to parse GCS credentials as JSON. Error: {e}")
+                    self.logger.error(f"Credentials value (first 200 chars): '{gcs_creds[:200]}'")
+                    self.logger.error(f"Full length: {len(gcs_creds)} characters")
+                    raise ValueError(
+                        "GCS credentials must be valid JSON. Please ensure the 'gcs-credentials' "
+                        "Prefect variable contains the complete service account JSON key. "
+                        "It should start with '{\"type\": \"service_account\", ...}'"
+                    )
                 
                 credentials = service_account.Credentials.from_service_account_info(
                     credentials_info
