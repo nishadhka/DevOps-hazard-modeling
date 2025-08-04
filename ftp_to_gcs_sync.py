@@ -182,36 +182,41 @@ class HydrologyDataSync:
     def setup_gcs_client(self):
         """Initialize and validate Google Cloud Storage client"""
         try:
-            # Handle GCS credentials - can be file path or JSON string
+            # Handle GCS credentials - can be file path, JSON string, or dict
             gcs_creds = self.config["gcs_credentials"]
             
-            self.logger.info(f"GCS credentials type: {type(gcs_creds)}, length: {len(gcs_creds)}")
+            self.logger.info(f"GCS credentials type: {type(gcs_creds)}")
 
-            if not gcs_creds or gcs_creds == '"{' or len(gcs_creds) < 10:
-                self.logger.error(f"GCS credentials appear incomplete or invalid: '{gcs_creds}'")
-                raise ValueError("GCS credentials are incomplete. Please check the 'gcs-credentials' Prefect variable contains the full service account JSON key.")
+            if not gcs_creds:
+                raise ValueError("GCS credentials are missing. Please check the 'gcs-credentials' Prefect variable.")
 
-            if gcs_creds.startswith("/"):
+            if isinstance(gcs_creds, str) and gcs_creds.startswith("/"):
                 # File path
                 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = gcs_creds
                 self.gcs_client = storage.Client()
+            elif isinstance(gcs_creds, dict):
+                # Already parsed dict (from Prefect variables)
+                from google.oauth2 import service_account
+                
+                credentials = service_account.Credentials.from_service_account_info(gcs_creds)
+                self.gcs_client = storage.Client(credentials=credentials)
             else:
-                # JSON string (from Prefect variables)
+                # JSON string (from Prefect variables or env)
                 import json
                 from google.oauth2 import service_account
+
+                if isinstance(gcs_creds, str) and (gcs_creds == '"{' or len(gcs_creds) < 10):
+                    self.logger.error(f"GCS credentials appear incomplete: '{gcs_creds}'")
+                    raise ValueError("GCS credentials are incomplete. Please check the 'gcs-credentials' Prefect variable.")
 
                 try:
                     # Try to parse as JSON
                     credentials_info = json.loads(gcs_creds)
                 except json.JSONDecodeError as e:
-                    # Log the actual value for debugging
                     self.logger.error(f"Failed to parse GCS credentials as JSON. Error: {e}")
-                    self.logger.error(f"Credentials value (first 200 chars): '{gcs_creds[:200]}'")
-                    self.logger.error(f"Full length: {len(gcs_creds)} characters")
                     raise ValueError(
                         "GCS credentials must be valid JSON. Please ensure the 'gcs-credentials' "
-                        "Prefect variable contains the complete service account JSON key. "
-                        "It should start with '{\"type\": \"service_account\", ...}'"
+                        "Prefect variable contains the complete service account JSON key."
                     )
                 
                 credentials = service_account.Credentials.from_service_account_info(
@@ -499,10 +504,15 @@ def gcs_upload_task(config, downloaded_files):
     # Setup GCS client with flexible credential handling
     gcs_creds = config["gcs_credentials"]
 
-    if gcs_creds.startswith("/"):
+    if isinstance(gcs_creds, str) and gcs_creds.startswith("/"):
         # File path
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = gcs_creds
         client = storage.Client()
+    elif isinstance(gcs_creds, dict):
+        # Already parsed dict
+        from google.oauth2 import service_account
+        credentials = service_account.Credentials.from_service_account_info(gcs_creds)
+        client = storage.Client(credentials=credentials)
     else:
         # JSON string (from Prefect variables)
         import json
