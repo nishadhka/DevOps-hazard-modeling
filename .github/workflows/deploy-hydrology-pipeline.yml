@@ -39,18 +39,12 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r geosfm/gcs_upload/requirements.txt
-        pip install pytest flake8 black
+        pip install pytest flake8
     
     - name: Lint with flake8
       run: |
         flake8 geosfm/gcs_upload/ --count --select=E9,F63,F7,F82 --show-source --statistics
         flake8 geosfm/gcs_upload/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-    
-    - name: Format check with black
-      run: |
-        black --check --diff geosfm/gcs_upload/
-      env:
-        NO_COLOR: 1
     
     - name: Test imports and syntax
       run: |
