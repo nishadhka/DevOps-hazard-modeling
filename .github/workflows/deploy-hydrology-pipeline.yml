@@ -70,13 +70,18 @@ jobs:
         pip install -r geosfm/gcs_upload/requirements.txt
     
     - name: Authenticate to Prefect Cloud
+      env:
+        PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
+        PREFECT_API_URL: ${{ env.PREFECT_API_URL }}
       run: |
         if [ -z "${{ secrets.PREFECT_API_KEY }}" ]; then
           echo "ERROR: PREFECT_API_KEY secret is not set in GitHub repository settings"
           echo "Please add PREFECT_API_KEY to your repository secrets"
           exit 1
         fi
-        prefect cloud login --key "${{ secrets.PREFECT_API_KEY }}"
+        # Set Prefect API settings via environment variables instead of login command
+        prefect config set PREFECT_API_KEY="${{ secrets.PREFECT_API_KEY }}"
+        prefect config set PREFECT_API_URL="${{ env.PREFECT_API_URL }}"
     
     - name: Set up Prefect variables
       env:
