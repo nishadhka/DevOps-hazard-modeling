@@ -1,0 +1,87 @@
+# Prefect Cloud Deployment Configuration
+# IGAD-ICPAC Hydrology Data Pipeline
+
+name: hydrology-data-sync
+description: "Daily synchronization of hydrology data from FTP to GCS"
+
+# Version and build settings
+version: "3.0.0"
+
+# GitHub repository configuration for direct deployment
+pull:
+  - prefect.deployments.steps.git_clone_project:
+      repository: https://github.com/IGAD-ICPAC/DevOps-hazard-modeling.git
+      branch: main
+      access_token: null
+
+# Work pool configuration
+work_pool:
+  name: " geosfm-cloud-pool"
+  work_queue_name: "default"
+
+# Deployment definitions
+deployments:
+  - name: "hydrology-midnight-sync"
+    version: "3.0.0"
+    tags: ["hydrology", "ftp", "gcs", "icpac", "production"]
+    description: "Daily midnight synchronization of hydrology data"
+    
+    # Entry point with relative path
+    entrypoint: "geosfm/gcs_upload/ftp_to_gcs_sync.py:hydrology_sync_flow"
+    
+    # Work pool for this deployment
+    work_pool:
+      name: " geosfm-cloud-pool"
+    
+    # Scheduling - runs every day at midnight UTC
+    schedule:
+      cron: "0 0 * * *"
+      timezone: "UTC"
+    
+    # Parameters (can be overridden at runtime)
+    parameters: {}
+    
+    # Job variables and configuration
+    job_variables:
+      env:
+        PREFECT_LOGGING_LEVEL: "INFO"
+        PREFECT_RESULTS_PERSIST_BY_DEFAULT: "false"
+      pip_packages:
+        - "prefect>=3.4.0"
+        - "google-cloud-storage>=2.0.0"
+        - "python-dotenv>=1.0.0"
+        - "google-auth>=2.0.0"
+    
+    # Retry configuration
+    flow_run_name: "hydrology-sync-{{ now() }}"
+    
+  - name: "hydrology-on-demand"
+    version: "3.0.0"
+    tags: ["hydrology", "ftp", "gcs", "icpac", "manual"]
+    description: "On-demand hydrology data synchronization"
+    
+    # Entry point with relative path
+    entrypoint: "geosfm/gcs_upload/ftp_to_gcs_sync.py:hydrology_sync_flow"
+    
+    # Work pool for this deployment
+    work_pool:
+      name: " geosfm-cloud-pool"
+    
+    # No schedule - manual trigger only
+    schedule: null
+    
+    # Parameters
+    parameters: {}
+    
+    # Job variables
+    job_variables:
+      env:
+        PREFECT_LOGGING_LEVEL: "INFO"
+        PREFECT_RESULTS_PERSIST_BY_DEFAULT: "false"
+      pip_packages:
+        - "prefect>=3.4.0"
+        - "google-cloud-storage>=2.0.0"
+        - "python-dotenv>=1.0.0"
+        - "google-auth>=2.0.0"
+    
+    flow_run_name: "hydrology-manual-{{ now() }}"
