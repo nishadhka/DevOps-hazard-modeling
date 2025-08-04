@@ -48,7 +48,9 @@ jobs:
     
     - name: Format check with black
       run: |
-        black --check geosfm/gcs_upload/
+        black --check --diff geosfm/gcs_upload/
+      env:
+        NO_COLOR: 1
     
     - name: Test imports and syntax
       run: |
