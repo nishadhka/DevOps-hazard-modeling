@@ -71,7 +71,12 @@ jobs:
     
     - name: Authenticate to Prefect Cloud
       run: |
-        prefect cloud login --key ${{ secrets.PREFECT_API_KEY }}
+        if [ -z "${{ secrets.PREFECT_API_KEY }}" ]; then
+          echo "ERROR: PREFECT_API_KEY secret is not set in GitHub repository settings"
+          echo "Please add PREFECT_API_KEY to your repository secrets"
+          exit 1
+        fi
+        prefect cloud login --key "${{ secrets.PREFECT_API_KEY }}"
     
     - name: Set up Prefect variables
       env:
@@ -105,7 +110,7 @@ jobs:
   docker-build:
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.ENABLE_DOCKER_BUILD == 'true'
     
     steps:
     - uses: actions/checkout@v4
