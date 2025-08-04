@@ -79,7 +79,7 @@ class HydrologyDataSync:
             self.logger = logging.getLogger("HydrologyDataSync")
             self.logger.info("Logging initialized - Console only (cloud environment)")
 
-        self.logger.info("Hydrology Data Sync v1.0.0 - Starting session")
+        self.logger.info("Hydrology Data Sync v2.0.0 - Starting session")
 
     def setup_directories(self):
         """Create necessary directory structure"""
