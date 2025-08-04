@@ -106,21 +106,17 @@ jobs:
         prefect variable set gcs-prefix "${GCS_PREFIX:-hydrology_data}" --overwrite
         prefect variable set gcs-credentials "$GCS_CREDENTIALS" --overwrite
     
-    - name: Update deployments with latest code
+    - name: Verify deployments
       env:
         PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
         PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
       run: |
-        cd geosfm/gcs_upload
-        echo "Updating existing deployments with latest code..."
-        
-        # Redeploy to update existing deployments with latest code
-        prefect deploy --all
-        
-        echo "Checking updated deployments..."
+        echo "Checking existing deployments..."
         prefect deployment ls
         echo "✅ Variables updated successfully!"
-        echo "✅ Deployments updated with latest code!"
+        echo "✅ Deployments are working - manual deployment update needed for code changes!"
+        echo ""
+        echo "To update deployments with latest code, manually redeploy from Prefect Cloud UI"
 
   docker-build:
     needs: test
