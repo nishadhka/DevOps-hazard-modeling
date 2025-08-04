@@ -12,6 +12,9 @@ pull:
   - prefect.deployments.steps.git_clone:
       repository: https://github.com/icpac-igad/DevOps-hazard-modeling.git
       branch: gcs_upload
+  - prefect.deployments.steps.run_shell_script:
+      script: |
+        pip install google-cloud-storage>=2.10.0 google-auth>=2.17.0 python-dotenv>=1.0.0
 
 # Work pool configuration
 work_pool:
