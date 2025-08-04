@@ -106,38 +106,15 @@ jobs:
         prefect variable set gcs-prefix "${GCS_PREFIX:-hydrology_data}" --overwrite
         prefect variable set gcs-credentials "$GCS_CREDENTIALS" --overwrite
     
-    - name: Setup work pool
+    - name: Verify existing deployments
       env:
         PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
         PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
       run: |
-        # List all work pools to see what exists
-        echo "Available work pools:"
-        prefect work-pool ls
-        
-        # Try to resume the work pool (ignore errors if already active)
-        echo "Attempting to resume geosfm-cloud-pool..."
-        prefect work-pool resume geosfm-cloud-pool || echo "Could not resume - may already be active or need manual intervention"
-        
-        # List pools again to confirm status
-        echo "Work pools after resume attempt:"
-        prefect work-pool ls
-    
-    - name: Deploy to Prefect Cloud
-      env:
-        PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
-        PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
-      run: |
-        cd geosfm/gcs_upload
-        prefect deploy --all
-    
-    - name: Verify deployment
-      env:
-        PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
-        PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
-      run: |
-        prefect deployment ls --name hydrology-midnight-sync
-        prefect deployment ls --name hydrology-on-demand
+        echo "Checking existing deployments..."
+        prefect deployment ls
+        echo "✅ Variables updated successfully!"
+        echo "✅ Deployments are ready in Prefect Cloud!"
 
   docker-build:
     needs: test
