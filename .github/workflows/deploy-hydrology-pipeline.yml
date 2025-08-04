@@ -115,17 +115,12 @@ jobs:
         echo "Available work pools:"
         prefect work-pool ls
         
-        # Check if work pool exists and unpause it if paused
-        if prefect work-pool ls | grep -q "geosfm-cloud-pool"; then
-          echo "Work pool geosfm-cloud-pool exists, ensuring it's active..."
-          prefect work-pool resume geosfm-cloud-pool
-        else
-          echo "Creating work pool: geosfm-cloud-pool"
-          prefect work-pool create geosfm-cloud-pool --type process
-        fi
+        # Try to resume the work pool (ignore errors if already active)
+        echo "Attempting to resume geosfm-cloud-pool..."
+        prefect work-pool resume geosfm-cloud-pool || echo "Could not resume - may already be active or need manual intervention"
         
         # List pools again to confirm status
-        echo "Work pools after setup:"
+        echo "Work pools after resume attempt:"
         prefect work-pool ls
     
     - name: Deploy to Prefect Cloud
