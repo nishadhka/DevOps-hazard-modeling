@@ -98,13 +98,13 @@ jobs:
         GCS_CREDENTIALS: ${{ secrets.GCS_CREDENTIALS }}
       run: |
         cd geosfm/gcs_upload
-        prefect variable set ftp-host "$FTP_HOST"
-        prefect variable set ftp-username "$FTP_USERNAME" 
-        prefect variable set ftp-password "$FTP_PASSWORD"
-        prefect variable set ftp-path "${FTP_PATH:-/output/}"
-        prefect variable set gcs-bucket "$GCS_BUCKET"
-        prefect variable set gcs-prefix "${GCS_PREFIX:-hydrology_data}"
-        prefect variable set gcs-credentials "$GCS_CREDENTIALS"
+        prefect variable set ftp-host "$FTP_HOST" --overwrite
+        prefect variable set ftp-username "$FTP_USERNAME" --overwrite
+        prefect variable set ftp-password "$FTP_PASSWORD" --overwrite
+        prefect variable set ftp-path "${FTP_PATH:-/output/}" --overwrite
+        prefect variable set gcs-bucket "$GCS_BUCKET" --overwrite
+        prefect variable set gcs-prefix "${GCS_PREFIX:-hydrology_data}" --overwrite
+        prefect variable set gcs-credentials "$GCS_CREDENTIALS" --overwrite
     
     - name: Deploy to Prefect Cloud
       env:
