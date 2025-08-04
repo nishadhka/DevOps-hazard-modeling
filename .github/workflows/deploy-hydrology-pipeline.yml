@@ -72,19 +72,24 @@ jobs:
     - name: Authenticate to Prefect Cloud
       env:
         PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
-        PREFECT_API_URL: ${{ env.PREFECT_API_URL }}
+        PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
       run: |
-        if [ -z "${{ secrets.PREFECT_API_KEY }}" ]; then
-          echo "ERROR: PREFECT_API_KEY secret is not set in GitHub repository settings"
-          echo "Please add PREFECT_API_KEY to your repository secrets"
-          exit 1
-        fi
-        # Set Prefect API settings via environment variables instead of login command
-        prefect config set PREFECT_API_KEY="${{ secrets.PREFECT_API_KEY }}"
-        prefect config set PREFECT_API_URL="${{ env.PREFECT_API_URL }}"
+        # Debug: Check if secrets are available
+        echo "Checking secret availability..."
+        echo "PREFECT_API_KEY length: ${#PREFECT_API_KEY}"
+        echo "PREFECT_API_URL: $PREFECT_API_URL"
+        
+        # Use environment variables directly - Prefect will pick them up
+        export PREFECT_API_KEY="${PREFECT_API_KEY}"
+        export PREFECT_API_URL="${PREFECT_API_URL}"
+        
+        # Verify connection
+        prefect version
     
     - name: Set up Prefect variables
       env:
+        PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
+        PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
         FTP_HOST: ${{ secrets.FTP_HOST }}
         FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
         FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
@@ -103,11 +108,17 @@ jobs:
         prefect variable set gcs-credentials "$GCS_CREDENTIALS"
     
     - name: Deploy to Prefect Cloud
+      env:
+        PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
+        PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
       run: |
         cd geosfm/gcs_upload
-        prefect deploy --all --pool " geosfm-cloud-pool"
+        prefect deploy --all --pool "geosfm-cloud-pool"
     
     - name: Verify deployment
+      env:
+        PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
+        PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
       run: |
         prefect deployment ls --name hydrology-midnight-sync
         prefect deployment ls --name hydrology-on-demand
