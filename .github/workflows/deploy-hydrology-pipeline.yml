@@ -112,10 +112,10 @@ jobs:
         PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
       run: |
         cd geosfm/gcs_upload
-        echo "Forcing update of existing deployments with latest code..."
+        echo "Updating existing deployments with latest code..."
         
-        # Force update both deployments by redeploying with --all flag
-        prefect deploy --all --force || echo "Deploy command failed, trying individual deployments..."
+        # Redeploy to update existing deployments with latest code
+        prefect deploy --all
         
         echo "Checking updated deployments..."
         prefect deployment ls
