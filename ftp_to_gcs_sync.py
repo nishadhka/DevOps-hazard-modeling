@@ -194,7 +194,18 @@ class HydrologyDataSync:
                 import json
                 from google.oauth2 import service_account
 
-                credentials_info = json.loads(gcs_creds)
+                try:
+                    # Try to parse as JSON
+                    credentials_info = json.loads(gcs_creds)
+                except json.JSONDecodeError:
+                    # Try fixing common issues (single quotes to double quotes)
+                    try:
+                        gcs_creds_fixed = gcs_creds.replace("'", '"')
+                        credentials_info = json.loads(gcs_creds_fixed)
+                    except json.JSONDecodeError:
+                        self.logger.error(f"Invalid JSON in GCS credentials. First 100 chars: {gcs_creds[:100]}")
+                        raise ValueError("GCS credentials must be valid JSON or a file path")
+                
                 credentials = service_account.Credentials.from_service_account_info(
                     credentials_info
                 )
