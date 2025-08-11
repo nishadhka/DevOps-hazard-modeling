@@ -2,13 +2,19 @@ name: Deploy Hydrology Pipeline to Prefect Cloud
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, gcs_upload ]
     paths: 
-      - 'geosfm/gcs_upload/**'
+      - '**/*.py'
+      - 'prefect.yaml'
+      - 'requirements.txt'
+      - '.github/workflows/deploy-hydrology-pipeline.yml'
   pull_request:
-    branches: [ main ]
+    branches: [ main, gcs_upload ]
     paths: 
-      - 'geosfm/gcs_upload/**'
+      - '**/*.py'
+      - 'prefect.yaml'
+      - 'requirements.txt'
+      - '.github/workflows/deploy-hydrology-pipeline.yml'
   workflow_dispatch:
 
 env:
@@ -37,23 +43,22 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r geosfm/gcs_upload/requirements.txt
+        pip install -r requirements.txt
         pip install pytest flake8
     
     - name: Lint with flake8
       run: |
-        flake8 geosfm/gcs_upload/ --count --select=E9,F63,F7,F82 --show-source --statistics
-        flake8 geosfm/gcs_upload/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=.git,__pycache__,docs/source/conf.py,old,build,dist
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics --exclude=.git,__pycache__,docs/source/conf.py,old,build,dist
     
     - name: Test imports and syntax
       run: |
-        python -m py_compile geosfm/gcs_upload/ftp_to_gcs_sync.py
-        python -m py_compile geosfm/gcs_upload/deploy.py
+        python -m py_compile ftp_to_gcs_sync.py
 
   deploy:
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/gcs_upload') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     
     steps:
     - uses: actions/checkout@v4
@@ -66,7 +71,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r geosfm/gcs_upload/requirements.txt
+        pip install -r requirements.txt
     
     - name: Authenticate to Prefect Cloud
       env:
@@ -97,7 +102,7 @@ jobs:
         GCS_PREFIX: ${{ secrets.GCS_PREFIX }}
         GCS_CREDENTIALS: ${{ secrets.GCS_CREDENTIALS }}
       run: |
-        cd geosfm/gcs_upload
+        # Set Prefect variables
         prefect variable set ftp-host "$FTP_HOST" --overwrite
         prefect variable set ftp-username "$FTP_USERNAME" --overwrite
         prefect variable set ftp-password "$FTP_PASSWORD" --overwrite
@@ -106,22 +111,25 @@ jobs:
         prefect variable set gcs-prefix "${GCS_PREFIX:-hydrology_data}" --overwrite
         prefect variable set gcs-credentials "$GCS_CREDENTIALS" --overwrite
     
-    - name: Verify deployments
+    - name: Update deployments with latest code
       env:
         PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
         PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
       run: |
-        echo "Checking existing deployments..."
+        echo "Updating existing deployments..."
+        # Deploy from current directory where prefect.yaml is located
+        
+        # Deploy all flows defined in prefect.yaml
+        prefect deploy --all
+        
+        echo "✅ Deployment completed successfully!"
+        echo "Listing current deployments:"
         prefect deployment ls
-        echo "✅ Variables updated successfully!"
-        echo "✅ Deployments are working - manual deployment update needed for code changes!"
-        echo ""
-        echo "To update deployments with latest code, manually redeploy from Prefect Cloud UI"
 
   docker-build:
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && vars.ENABLE_DOCKER_BUILD == 'true'
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/gcs_upload') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && vars.ENABLE_DOCKER_BUILD == 'true'
     
     steps:
     - uses: actions/checkout@v4
@@ -149,7 +157,7 @@ jobs:
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
       with:
-        context: geosfm/gcs_upload
+        context: .
         push: true
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}

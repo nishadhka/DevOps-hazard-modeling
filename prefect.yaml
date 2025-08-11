@@ -18,7 +18,7 @@ pull:
 
 # Work pool configuration
 work_pool:
-  name: " geosfm-cloud-pool"
+  name: "geosfm-cloud-pool"
   work_queue_name: "default"
 
 # Deployment definitions
@@ -33,7 +33,7 @@ deployments:
     
     # Work pool for this deployment
     work_pool:
-      name: " geosfm-cloud-pool"
+      name: "geosfm-cloud-pool"
     
     # Scheduling - runs every day at midnight UTC
     schedule:

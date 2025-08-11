@@ -170,10 +170,14 @@ class HydrologyDataSync:
 
         # Then try Prefect variable (for cloud deployment)
         try:
+            # Check if we're in a Prefect context
+            from prefect import get_run_context
+            get_run_context()
             value = variables.get(prefect_var)
             if value:
                 return value
         except Exception:
+            # Not in Prefect context or variable doesn't exist
             pass
 
         # Return default
@@ -312,7 +316,12 @@ class HydrologyDataSync:
 
     def run_synchronization_internal(self):
         """Execute the complete synchronization process using Prefect flow"""
-        logger = get_run_logger()
+        try:
+            logger = get_run_logger()
+        except:
+            # Not in Prefect context, use regular logger
+            logger = self.logger
+            
         logger.info("=" * 60)
         logger.info("STARTING HYDROLOGY DATA SYNCHRONIZATION")
         logger.info("=" * 60)
@@ -636,8 +645,70 @@ def hydrology_sync_flow():
     return sync_tool.run_synchronization_internal()
 
 
+def list_ftp_files():
+    """List all files on FTP server for debugging"""
+    from dotenv import load_dotenv
+    load_dotenv()
+    
+    try:
+        print("=== FTP FILE LISTING ===")
+        ftp_host = os.getenv("FTP_HOST")
+        ftp_port = int(os.getenv("FTP_PORT", "21"))
+        ftp_username = os.getenv("FTP_USERNAME")
+        ftp_password = os.getenv("FTP_PASSWORD")
+        ftp_path = os.getenv("FTP_PATH", "/")
+        
+        print(f"Connecting to {ftp_host}:{ftp_port}")
+        print(f"Path: {ftp_path}")
+        
+        ftp = ftplib.FTP()
+        ftp.connect(ftp_host, ftp_port, timeout=30)
+        ftp.login(ftp_username, ftp_password)
+        
+        if ftp_path and ftp_path != "/":
+            ftp.cwd(ftp_path)
+            
+        print(f"Current directory: {ftp.pwd()}")
+        
+        # Try different connection modes
+        modes = [("passive", True), ("active", False)]
+        
+        for mode_name, pasv_mode in modes:
+            try:
+                print(f"\nTrying {mode_name} mode...")
+                ftp.set_pasv(pasv_mode)
+                
+                # Quick test with pwd
+                print(f"PWD works: {ftp.pwd()}")
+                
+                # Try file listing
+                files = ftp.nlst()
+                print(f"Found {len(files)} files using nlst():")
+                for f in files[:10]:  # Show first 10 files
+                    print(f"  {f}")
+                if len(files) > 10:
+                    print(f"  ... and {len(files) - 10} more files")
+                    
+                break  # Success, exit loop
+                
+            except Exception as e:
+                print(f"{mode_name} mode failed: {e}")
+                continue
+            
+        ftp.quit()
+        
+    except Exception as e:
+        print(f"Error: {e}")
+
 def main():
     """Main entry point for the synchronization tool"""
+    import sys
+    
+    # Check if we want to list files
+    if len(sys.argv) > 1 and sys.argv[1] == "list":
+        list_ftp_files()
+        return
+        
     try:
         # Initialize and run synchronization
         sync_tool = HydrologyDataSync()
