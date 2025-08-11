@@ -16,11 +16,6 @@ pull:
       script: |
         pip install google-cloud-storage>=2.10.0 google-auth>=2.17.0 python-dotenv>=1.0.0
 
-# Work pool configuration
-work_pool:
-  name: "geosfm-cloud-pool"
-  work_queue_name: "default"
-
 # Deployment definitions
 deployments:
   - name: "hydrology-midnight-sync"
@@ -30,10 +25,6 @@ deployments:
     
     # Entry point - local file for deployment, runtime path handled by working_dir
     entrypoint: "ftp_to_gcs_sync.py:hydrology_sync_flow"
-    
-    # Work pool for this deployment
-    work_pool:
-      name: "geosfm-cloud-pool"
     
     # Scheduling - runs every day at midnight UTC
     schedule:
