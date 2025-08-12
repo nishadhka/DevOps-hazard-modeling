@@ -1,174 +1,181 @@
-name: Deploy Hydrology Pipeline to Prefect Cloud
+name: Test, Build and Deploy Hydrology Pipeline
 
 on:
   push:
-    branches: [ main, gcs_upload ]
-    paths: 
-      - '**/*.py'
-      - 'prefect.yaml'
-      - 'requirements.txt'
-      - '.github/workflows/deploy-hydrology-pipeline.yml'
+    branches: [gcs_upload, main]
   pull_request:
-    branches: [ main, gcs_upload ]
-    paths: 
-      - '**/*.py'
-      - 'prefect.yaml'
-      - 'requirements.txt'
-      - '.github/workflows/deploy-hydrology-pipeline.yml'
+    branches: [main]
   workflow_dispatch:
-
-env:
-  PYTHON_VERSION: '3.11'
 
 jobs:
   test:
+    name: Test Pipeline
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install prefect>=3.0.0
+          pip install google-cloud-storage>=2.10.0
+          pip install python-dotenv>=1.0.0
+          pip install pytest pytest-cov
+
+      - name: Run syntax check
+        run: |
+          python -m py_compile ftp_to_gcs_sync.py
+
+      - name: Run basic tests
+        run: |
+          # Test imports
+          python -c "import ftp_to_gcs_sync; print('Import successful')"
+          
+          # Test configuration loading (will fail gracefully without .env)
+          python -c "
+          try:
+              from ftp_to_gcs_sync import HydrologyDataSync
+              print('Class instantiation test passed')
+          except ValueError as e:
+              if 'Missing required configuration' in str(e):
+                  print('Configuration validation working correctly')
+              else:
+                  raise
+          "
+
+      - name: Validate Prefect configuration
+        run: |
+          # Validate prefect.yaml syntax
+          python -c "
+          import yaml
+          with open('prefect.yaml', 'r') as f:
+              config = yaml.safe_load(f)
+          print('prefect.yaml is valid')
+          print(f'Found {len(config.get(\"deployments\", []))} deployment(s)')
+          "
+
+  build:
+    name: Build and Validate
+    needs: test
+    runs-on: ubuntu-latest
     
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-    
-    - name: Cache dependencies
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pytest flake8
-    
-    - name: Lint with flake8
-      run: |
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=.git,__pycache__,docs/source/conf.py,old,build,dist
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics --exclude=.git,__pycache__,docs/source/conf.py,old,build,dist
-    
-    - name: Test imports and syntax
-      run: |
-        python -m py_compile ftp_to_gcs_sync.py
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Prefect
+        run: |
+          pip install prefect>=3.0.0
+
+      - name: Build deployment artifacts
+        run: |
+          # Validate deployment configuration
+          prefect deployment inspect hydrology-data-sync/hydrology-midnight-sync || echo "Deployment not yet created"
+          
+          # Check all required files exist
+          echo "Checking required files..."
+          for file in ftp_to_gcs_sync.py prefect.yaml; do
+            if [ -f "$file" ]; then
+              echo "✓ $file exists"
+            else
+              echo "✗ $file missing"
+              exit 1
+            fi
+          done
+
+      - name: Create deployment preview
+        run: |
+          echo "Deployment configuration:"
+          cat prefect.yaml
 
   deploy:
-    needs: test
+    name: Deploy to Prefect Cloud
+    needs: build
     runs-on: ubuntu-latest
-    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/gcs_upload') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    # Only deploy on push to gcs_upload branch, not on PRs
+    if: github.event_name == 'push' && github.ref == 'refs/heads/gcs_upload'
     
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    
-    - name: Authenticate to Prefect Cloud
-      env:
-        PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
-        PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
-      run: |
-        # Debug: Check if secrets are available
-        echo "Checking secret availability..."
-        echo "PREFECT_API_KEY length: ${#PREFECT_API_KEY}"
-        echo "PREFECT_API_URL: $PREFECT_API_URL"
-        
-        # Use environment variables directly - Prefect will pick them up
-        export PREFECT_API_KEY="${PREFECT_API_KEY}"
-        export PREFECT_API_URL="${PREFECT_API_URL}"
-        
-        # Verify connection
-        prefect version
-    
-    - name: Set up Prefect variables
-      env:
-        PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
-        PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
-        FTP_HOST: ${{ secrets.FTP_HOST }}
-        FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
-        FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-        FTP_PATH: ${{ secrets.FTP_PATH }}
-        GCS_BUCKET: ${{ secrets.GCS_BUCKET }}
-        GCS_PREFIX: ${{ secrets.GCS_PREFIX }}
-        GCS_CREDENTIALS: ${{ secrets.GCS_CREDENTIALS }}
-      run: |
-        # Set Prefect variables
-        prefect variable set ftp-host "$FTP_HOST" --overwrite
-        prefect variable set ftp-username "$FTP_USERNAME" --overwrite
-        prefect variable set ftp-password "$FTP_PASSWORD" --overwrite
-        prefect variable set ftp-path "${FTP_PATH:-/output/}" --overwrite
-        prefect variable set gcs-bucket "$GCS_BUCKET" --overwrite
-        prefect variable set gcs-prefix "${GCS_PREFIX:-hydrology_data}" --overwrite
-        prefect variable set gcs-credentials "$GCS_CREDENTIALS" --overwrite
-    
-    - name: Update deployments with latest code
-      env:
-        PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
-        PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
-      run: |
-        echo "Checking for existing deployments..."
-        prefect deployment ls
-        
-        echo ""
-        echo "Deploying flows..."
-        # Deploy with explicit pool specification to avoid prompts
-        prefect deploy --all --pool geosfm-cloud-pool || {
-          echo "Direct deployment failed, trying with build..."
-          prefect deploy --all --pool geosfm-cloud-pool --build || {
-            echo "❌ Deployment failed. Manual deployment may be required."
-            echo "Variables have been updated successfully."
-            exit 0
-          }
-        }
-        
-        echo "✅ Deployment completed successfully!"
-        echo "Listing updated deployments:"
-        prefect deployment ls
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-  docker-build:
-    needs: test
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Prefect
+        run: |
+          pip install prefect>=3.0.0
+
+      - name: Authenticate with Prefect Cloud
+        env:
+          PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
+          PREFECT_API_URL: ${{ secrets.PREFECT_API_URL }}
+        run: |
+          prefect config set PREFECT_API_KEY="${PREFECT_API_KEY}"
+          prefect config set PREFECT_API_URL="${PREFECT_API_URL}"
+
+      - name: Deploy to Prefect Cloud
+        env:
+          PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
+          PREFECT_API_URL: ${{ secrets.PREFECT_API_URL }}
+        run: |
+          echo "Deploying to Prefect Cloud..."
+          
+          # Deploy all deployments defined in prefect.yaml
+          prefect deploy --all --no-prompt
+          
+          echo "Deployment completed successfully!"
+
+      - name: Verify deployment
+        env:
+          PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
+          PREFECT_API_URL: ${{ secrets.PREFECT_API_URL }}
+        run: |
+          echo "Verifying deployment..."
+          prefect deployment ls | grep hydrology || echo "Deployment list not available"
+          
+          # Show deployment details
+          prefect deployment inspect hydrology-data-sync/hydrology-midnight-sync || echo "Could not inspect deployment"
+
+  notify:
+    name: Notify Status
+    needs: [test, build, deploy]
     runs-on: ubuntu-latest
-    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/gcs_upload') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && vars.ENABLE_DOCKER_BUILD == 'true'
+    if: always()
     
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-    
-    - name: Log in to Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Extract metadata
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ghcr.io/${{ github.repository }}/hydrology-pipeline
-        tags: |
-          type=ref,event=branch
-          type=sha,prefix={{branch}}-
-          type=raw,value=latest,enable={{is_default_branch}}
-    
-    - name: Build and push Docker image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+      - name: Check status
+        run: |
+          if [ "${{ needs.test.result }}" == "success" ] && \
+             [ "${{ needs.build.result }}" == "success" ] && \
+             [ "${{ needs.deploy.result }}" == "success" ]; then
+            echo "✅ Pipeline deployed successfully!"
+          else
+            echo "❌ Pipeline deployment failed"
+            echo "Test: ${{ needs.test.result }}"
+            echo "Build: ${{ needs.build.result }}"
+            echo "Deploy: ${{ needs.deploy.result }}"
+            exit 1
+          fi

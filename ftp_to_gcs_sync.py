@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 FTP to Google Cloud Storage Synchronization
 IGAD-ICPAC Hydrology Data Pipeline
@@ -252,7 +251,7 @@ class HydrologyDataSync:
 
             return ftp
 
-        except Exception as e:
+        except Exception:
             raise
 
     def get_config_dict(self):
@@ -422,41 +421,115 @@ def ftp_download_task(config):
     )
 
     def connect_ftp_with_retry():
-        """Connect to FTP with multiple connection strategies"""
+        """Connect to FTP with comprehensive connection strategies"""
+        import socket
+        import time
+        
         connection_strategies = [
-            # Strategy 1: Passive mode with short timeout
-            {"pasv": True, "timeout": 15},
-            # Strategy 2: Active mode with short timeout  
-            {"pasv": False, "timeout": 15},
-            # Strategy 3: Passive mode with longer timeout
-            {"pasv": True, "timeout": 60},
+            # Strategy 1: Passive mode with standard timeout
+            {"pasv": True, "timeout": 30, "encoding": "utf-8"},
+            # Strategy 2: Passive mode with longer timeout 
+            {"pasv": True, "timeout": 60, "encoding": "utf-8"},
+            # Strategy 3: Active mode with standard timeout
+            {"pasv": False, "timeout": 30, "encoding": "utf-8"},
+            # Strategy 4: Active mode with longer timeout
+            {"pasv": False, "timeout": 60, "encoding": "utf-8"},
+            # Strategy 5: Passive mode with latin-1 encoding (some servers need this)
+            {"pasv": True, "timeout": 45, "encoding": "latin-1"},
+            # Strategy 6: Active mode with no data timeout (last resort)
+            {"pasv": False, "timeout": 90, "encoding": "utf-8", "no_data_timeout": True},
         ]
         
         for i, strategy in enumerate(connection_strategies, 1):
+            ftp = None
             try:
-                logger.info(f"FTP connection attempt {i}/3: pasv={strategy['pasv']}, timeout={strategy['timeout']}s")
+                logger.info(f"FTP connection attempt {i}/{len(connection_strategies)}: "
+                          f"pasv={strategy['pasv']}, timeout={strategy['timeout']}s, "
+                          f"encoding={strategy['encoding']}")
                 
+                # Create FTP instance with specific settings
                 ftp = ftplib.FTP()
+                
+                # Set socket timeout for connection
+                ftp.sock = None
+                
+                # Connect with timeout
+                logger.info(f"Connecting to {config['ftp_host']}:{config['ftp_port']}...")
                 ftp.connect(config["ftp_host"], config["ftp_port"], timeout=strategy['timeout'])
+                
+                # Set encoding
+                ftp.encoding = strategy['encoding']
+                
+                # Login
+                logger.info("Logging in...")
                 ftp.login(config["ftp_username"], config["ftp_password"])
+                
+                # Set passive/active mode
+                logger.info(f"Setting {'passive' if strategy['pasv'] else 'active'} mode...")
                 ftp.set_pasv(strategy['pasv'])
                 
+                # For problematic servers, try setting socket options
+                if hasattr(ftp, 'sock') and ftp.sock:
+                    try:
+                        ftp.sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                        ftp.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    except:
+                        pass  # Ignore if not supported
+                
+                # Change to target directory
                 if config["ftp_path"] and config["ftp_path"] != "/":
+                    logger.info(f"Changing to directory: {config['ftp_path']}")
                     ftp.cwd(config["ftp_path"])
                 
-                # Test connection with a simple command
-                ftp.pwd()
+                # Test connection with PWD command
+                logger.info("Testing connection...")
+                current_dir = ftp.pwd()
+                logger.info(f"Current directory: {current_dir}")
+                
+                # Try a simple list command to test data connection
+                logger.info("Testing data connection...")
+                try:
+                    # Use a timeout wrapper for data operations if needed
+                    if strategy.get('no_data_timeout'):
+                        # For problematic servers, try without explicit timeouts
+                        test_files = ftp.nlst('.')[:1]  # Just get one file
+                    else:
+                        # Set a reasonable timeout for data connections
+                        old_timeout = ftp.sock.gettimeout() if ftp.sock else None
+                        if ftp.sock:
+                            ftp.sock.settimeout(strategy['timeout'])
+                        test_files = ftp.nlst('.')[:1]  # Just get one file
+                        if ftp.sock and old_timeout:
+                            ftp.sock.settimeout(old_timeout)
+                    
+                    logger.info(f"Data connection test successful - found {len(test_files)} test files")
+                    
+                except Exception as data_e:
+                    logger.warning(f"Data connection test failed: {data_e}")
+                    # For some servers, data connection might fail initially but work later
+                    # Don't fail immediately, but log the issue
+                
                 logger.info(f"FTP connection successful with strategy {i}")
                 return ftp
                 
             except Exception as e:
-                logger.warning(f"FTP strategy {i} failed: {e}")
+                logger.warning(f"FTP strategy {i} failed: {type(e).__name__}: {e}")
                 try:
-                    ftp.quit()
+                    if ftp:
+                        ftp.quit()
                 except:
-                    pass
+                    try:
+                        if ftp:
+                            ftp.close()
+                    except:
+                        pass
+                
+                # Add delay between attempts to avoid overwhelming the server
+                if i < len(connection_strategies):
+                    time.sleep(2)
+                    
                 if i == len(connection_strategies):
-                    raise e
+                    raise ConnectionError(f"All FTP connection strategies failed. Last error: {e}")
                 continue
     
     try:
@@ -661,38 +734,151 @@ def list_ftp_files():
         print(f"Connecting to {ftp_host}:{ftp_port}")
         print(f"Path: {ftp_path}")
         
-        ftp = ftplib.FTP()
-        ftp.connect(ftp_host, ftp_port, timeout=30)
-        ftp.login(ftp_username, ftp_password)
+        # Use robust connection with multiple strategies
+        connection_strategies = [
+            {"pasv": True, "timeout": 30, "encoding": "utf-8"},
+            {"pasv": True, "timeout": 60, "encoding": "utf-8"}, 
+            {"pasv": False, "timeout": 30, "encoding": "utf-8"},
+            {"pasv": False, "timeout": 60, "encoding": "utf-8"},
+            {"pasv": True, "timeout": 45, "encoding": "latin-1"},
+        ]
+        
+        ftp = None
+        for i, strategy in enumerate(connection_strategies, 1):
+            try:
+                print(f"Connection attempt {i}/{len(connection_strategies)}: "
+                      f"pasv={strategy['pasv']}, timeout={strategy['timeout']}s")
+                
+                ftp = ftplib.FTP()
+                ftp.connect(ftp_host, ftp_port, timeout=strategy['timeout'])
+                ftp.encoding = strategy['encoding']
+                ftp.login(ftp_username, ftp_password)
+                ftp.set_pasv(strategy['pasv'])
+                
+                # Test connection
+                ftp.pwd()
+                print(f"Connection successful with strategy {i}")
+                break
+                
+            except Exception as e:
+                print(f"Strategy {i} failed: {e}")
+                if ftp:
+                    try:
+                        ftp.quit()
+                    except:
+                        try:
+                            ftp.close()
+                        except:
+                            pass
+                ftp = None
+                if i == len(connection_strategies):
+                    raise
+                continue
+        
+        if not ftp:
+            raise ConnectionError("All connection strategies failed")
         
         if ftp_path and ftp_path != "/":
             ftp.cwd(ftp_path)
             
         print(f"Current directory: {ftp.pwd()}")
         
-        # Try different connection modes
-        modes = [("passive", True), ("active", False)]
+        # Try different connection modes with robust error handling
+        modes = [
+            ("passive", True, 30), 
+            ("passive (extended timeout)", True, 60),
+            ("active", False, 30),
+            ("active (extended timeout)", False, 60)
+        ]
         
-        for mode_name, pasv_mode in modes:
+        for mode_name, pasv_mode, timeout in modes:
             try:
-                print(f"\nTrying {mode_name} mode...")
+                print(f"\nTrying {mode_name} mode (timeout: {timeout}s)...")
                 ftp.set_pasv(pasv_mode)
                 
-                # Quick test with pwd
-                print(f"PWD works: {ftp.pwd()}")
+                # Set socket timeout if available
+                if hasattr(ftp, 'sock') and ftp.sock:
+                    ftp.sock.settimeout(timeout)
                 
-                # Try file listing
-                files = ftp.nlst()
-                print(f"Found {len(files)} files using nlst():")
-                for f in files[:10]:  # Show first 10 files
-                    print(f"  {f}")
-                if len(files) > 10:
-                    print(f"  ... and {len(files) - 10} more files")
+                # Quick test with pwd
+                pwd_result = ftp.pwd()
+                print(f"PWD works: {pwd_result}")
+                
+                # Try file listing with multiple methods and fallback strategies
+                files = []
+                
+                def parse_list_output():
+                    """Parse LIST command output to get filenames"""
+                    lines = []
+                    ftp.retrlines('LIST', lines.append)
+                    filenames = []
+                    for line in lines:
+                        if line.strip() and not line.startswith('total'):
+                            parts = line.split()
+                            if len(parts) >= 9 and not line.startswith('d'):  # Not a directory
+                                filename = ' '.join(parts[8:])  # Handle filenames with spaces
+                                if filename not in ['.', '..']:
+                                    filenames.append(filename)
+                    return filenames
+                
+                listing_methods = [
+                    ("nlst()", lambda: ftp.nlst()),
+                    ("nlst('.')", lambda: ftp.nlst('.')),  
+                    ("nlst('*')", lambda: ftp.nlst('*')),
+                    ("LIST parsing", parse_list_output),
+                    ("DIR command", lambda: [line.split()[-1] for line in ftp.nlst() if line.strip()]),
+                ]
+                
+                for method_name, method_func in listing_methods:
+                    try:
+                        print(f"  Trying {method_name}...")
+                        
+                        # For data connection issues, try switching modes temporarily
+                        original_pasv = None
+                        try:
+                            files = method_func()
+                            if files:
+                                print(f"  Success with {method_name}")
+                                break
+                        except (ConnectionResetError, BrokenPipeError, OSError) as data_err:
+                            print(f"  Data connection failed with {method_name}: {data_err}")
+                            # Try switching passive/active mode for this operation
+                            if hasattr(ftp, '_pasv'):
+                                original_pasv = ftp._pasv
+                                try:
+                                    ftp.set_pasv(not original_pasv)
+                                    print(f"    Retrying with {'passive' if not original_pasv else 'active'} mode...")
+                                    files = method_func()
+                                    if files:
+                                        print(f"  Success with {method_name} after mode switch")
+                                        break
+                                except Exception as retry_e:
+                                    print(f"    Mode switch retry failed: {retry_e}")
+                                finally:
+                                    # Restore original mode
+                                    if original_pasv is not None:
+                                        try:
+                                            ftp.set_pasv(original_pasv)
+                                        except:
+                                            pass
+                        
+                    except Exception as list_e:
+                        print(f"  {method_name} failed: {type(list_e).__name__}: {list_e}")
+                        continue
+                
+                if files:
+                    print(f"Found {len(files)} files:")
+                    for f in files[:10]:  # Show first 10 files
+                        print(f"  {f}")
+                    if len(files) > 10:
+                        print(f"  ... and {len(files) - 10} more files")
+                else:
+                    print("No files found with any listing method")
                     
                 break  # Success, exit loop
                 
             except Exception as e:
-                print(f"{mode_name} mode failed: {e}")
+                print(f"{mode_name} mode failed: {type(e).__name__}: {e}")
                 continue
             
         ftp.quit()

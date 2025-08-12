@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  hydrology-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hydrology-sync
+    restart: "no"  # Don't auto-restart - Prefect will trigger runs
+    
+    # Environment variables
+    environment:
+      - TZ=UTC
+      - PYTHONUNBUFFERED=1
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/gcs-key.json
+    
+    # Mount logs directory to host for persistence
+    volumes:
+      - ./logs:/app/logs
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
