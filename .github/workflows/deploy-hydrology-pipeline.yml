@@ -128,30 +128,53 @@ jobs:
         run: |
           pip install prefect>=3.0.0
 
-      - name: Authenticate with Prefect Cloud
-        env:
-          PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
-          PREFECT_API_URL: ${{ secrets.PREFECT_API_URL }}
+      - name: Install dependencies and load .env
         run: |
-          prefect config set PREFECT_API_KEY="${PREFECT_API_KEY}"
-          prefect config set PREFECT_API_URL="${PREFECT_API_URL}"
+          pip install python-dotenv
+          
+      - name: Authenticate with Prefect Cloud
+        run: |
+          # Load credentials from .env file
+          python -c "
+          from dotenv import load_dotenv
+          import os
+          import subprocess
+          
+          load_dotenv()
+          api_key = os.getenv('PREFECT_API_KEY')
+          api_url = os.getenv('PREFECT_API_URL')
+          
+          if not api_key or not api_url:
+              print('❌ PREFECT_API_KEY and PREFECT_API_URL must be set in .env file')
+              exit(1)
+          
+          print('🔐 Setting Prefect Cloud configuration...')
+          subprocess.run(['prefect', 'config', 'set', f'PREFECT_API_KEY={api_key}'], check=True)
+          subprocess.run(['prefect', 'config', 'set', f'PREFECT_API_URL={api_url}'], check=True)
+          print('✅ Prefect credentials configured')
+          "
+          
+          # Verify connection
+          echo "Verifying Prefect Cloud connection..."
+          prefect work-pool ls || echo "Could not list work pools"
 
       - name: Deploy to Prefect Cloud
-        env:
-          PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
-          PREFECT_API_URL: ${{ secrets.PREFECT_API_URL }}
         run: |
           echo "Deploying to Prefect Cloud..."
+          
+          # Check if work pool exists (should exist since geosfm-cloud-pool is already there)
+          if prefect work-pool inspect geosfm-cloud-pool 2>/dev/null; then
+            echo "✅ Work pool 'geosfm-cloud-pool' exists"
+          else
+            echo "⚠️  Work pool 'geosfm-cloud-pool' not found, but continuing..."
+          fi
           
           # Deploy all deployments defined in prefect.yaml
           prefect deploy --all
           
-          echo "Deployment completed successfully!"
+          echo "✅ Deployment completed successfully!"
 
       - name: Verify deployment
-        env:
-          PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
-          PREFECT_API_URL: ${{ secrets.PREFECT_API_URL }}
         run: |
           echo "Verifying deployment..."
           prefect deployment ls | grep hydrology || echo "Deployment list not available"
