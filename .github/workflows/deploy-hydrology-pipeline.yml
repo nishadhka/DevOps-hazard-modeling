@@ -112,8 +112,8 @@ jobs:
     name: Deploy to Prefect Cloud
     needs: build
     runs-on: ubuntu-latest
-    # Only deploy on push to gcs_upload branch, not on PRs
-    if: github.event_name == 'push' && github.ref == 'refs/heads/gcs_upload'
+    # Deploy on push to gcs_upload branch or manual trigger
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/gcs_upload') || github.event_name == 'workflow_dispatch'
     
     steps:
       - name: Checkout code
