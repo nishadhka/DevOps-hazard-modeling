@@ -128,31 +128,16 @@ jobs:
         run: |
           pip install prefect>=3.0.0
 
-      - name: Install dependencies and load .env
-        run: |
-          pip install python-dotenv
-          
       - name: Authenticate with Prefect Cloud
+        env:
+          PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
+          PREFECT_API_URL: ${{ secrets.PREFECT_API_URL }}
         run: |
-          # Load credentials from .env file
-          python -c "
-          from dotenv import load_dotenv
-          import os
-          import subprocess
+          # Set Prefect Cloud configuration from GitHub Secrets
+          prefect config set PREFECT_API_KEY="${PREFECT_API_KEY}"
+          prefect config set PREFECT_API_URL="${PREFECT_API_URL}"
           
-          load_dotenv()
-          api_key = os.getenv('PREFECT_API_KEY')
-          api_url = os.getenv('PREFECT_API_URL')
-          
-          if not api_key or not api_url:
-              print('❌ PREFECT_API_KEY and PREFECT_API_URL must be set in .env file')
-              exit(1)
-          
-          print('🔐 Setting Prefect Cloud configuration...')
-          subprocess.run(['prefect', 'config', 'set', f'PREFECT_API_KEY={api_key}'], check=True)
-          subprocess.run(['prefect', 'config', 'set', f'PREFECT_API_URL={api_url}'], check=True)
-          print('✅ Prefect credentials configured')
-          "
+          echo "✅ Prefect credentials configured"
           
           # Verify connection
           echo "Verifying Prefect Cloud connection..."
