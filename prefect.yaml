@@ -44,7 +44,7 @@ deployments:
           FTP_PATH: "{{ prefect.blocks.string.ftp-path }}"
           FTP_PORT: "21"
           GCS_BUCKET: "{{ prefect.blocks.string.gcs-bucket }}"
-          GCS_CREDENTIALS: "{{ prefect.blocks.json.gcs-credentials }}"
+          GCS_CREDENTIALS: "{{ prefect.blocks.secret.gcs-credentials-string }}"
     
     # Scheduling - runs every day at midnight UTC
     schedule:
