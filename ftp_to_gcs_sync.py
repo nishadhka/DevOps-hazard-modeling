@@ -335,7 +335,14 @@ class HydrologyDataSync:
             "upload_failures": 0,
             "files_skipped": 0,
             "errors": [],
+            "ftp_connection_status": "not_attempted",
+            "gcs_connection_status": "not_attempted",
+            "data_connection_issues": [],
+            "detailed_steps": [],
         }
+        
+        # Store for access in other methods
+        self._current_sync_results = sync_results
 
         try:
             # Step 1: Connect to FTP and download files
@@ -386,16 +393,36 @@ class HydrologyDataSync:
         self.logger.info("SYNCHRONIZATION SUMMARY")
         self.logger.info("=" * 60)
         self.logger.info(f"Status: {results['status'].upper()}")
-        self.logger.info(f"Duration: {results['duration']}")
-        self.logger.info(f"Files discovered: {results['files_discovered']}")
-        self.logger.info(f"Files downloaded: {results['files_downloaded']}")
-        self.logger.info(f"Download failures: {results['download_failures']}")
-        self.logger.info(f"Files uploaded to GCS: {results['files_uploaded']}")
-        self.logger.info(f"Upload failures: {results['upload_failures']}")
-        self.logger.info(f"Files skipped (duplicates): {results['files_skipped']}")
+        self.logger.info(f"Duration: {results.get('duration', 'N/A')}")
+        
+        # Connection Status
+        self.logger.info("\nCONNECTION STATUS:")
+        self.logger.info(f"  FTP Connection: {results.get('ftp_connection_status', 'not_attempted')}")
+        self.logger.info(f"  GCS Connection: {results.get('gcs_connection_status', 'not_attempted')}")
+        
+        # File Operations
+        self.logger.info("\nFILE OPERATIONS:")
+        self.logger.info(f"  Files discovered: {results['files_discovered']}")
+        self.logger.info(f"  Files downloaded: {results['files_downloaded']}")
+        self.logger.info(f"  Download failures: {results['download_failures']}")
+        self.logger.info(f"  Files uploaded to GCS: {results['files_uploaded']}")
+        self.logger.info(f"  Upload failures: {results['upload_failures']}")
+        self.logger.info(f"  Files skipped (duplicates): {results['files_skipped']}")
+        
+        # Data Connection Issues
+        if results.get('data_connection_issues'):
+            self.logger.warning("\nDATA CONNECTION ISSUES:")
+            for issue in results['data_connection_issues']:
+                self.logger.warning(f"  - [{issue.get('step')}] {issue.get('error_type')}: {issue.get('error_message')}")
+        
+        # Detailed Steps
+        if results.get('detailed_steps'):
+            self.logger.info("\nDETAILED STEPS:")
+            for step in results['detailed_steps']:
+                self.logger.info(f"  - [{step.get('timestamp')}] {step.get('step')}: {step.get('status')}")
 
         if results["errors"]:
-            self.logger.error("Errors encountered:")
+            self.logger.error("\nERRORS ENCOUNTERED:")
             for error in results["errors"]:
                 self.logger.error(f"  - {error}")
 
@@ -554,6 +581,9 @@ def ftp_download_task(config):
                     break
             except Exception as e:
                 logger.warning(f"{method_name} failed: {e}")
+                # Log detailed error for monitoring
+                logger.warning(f"  Error type: {type(e).__name__}")
+                logger.warning(f"  Error details: {str(e)}")
                 continue
         
         if not all_files:
@@ -564,8 +594,26 @@ def ftp_download_task(config):
                 try:
                     test_files = ftp.nlst(f"*{pattern}*")
                     all_files.extend(test_files)
-                except:
+                    logger.info(f"  Pattern '{pattern}' found {len(test_files)} files")
+                except Exception as e:
+                    logger.warning(f"  Pattern '{pattern}' failed: {e}")
                     pass
+            
+            # If still no files, try direct file names
+            if not all_files:
+                logger.info("Trying direct file name approach...")
+                zones = ['zone1', 'zone2', 'zone3', 'zone4', 'zone5', 'zone6']
+                for pattern in patterns:
+                    for zone in zones:
+                        filename = f"{pattern}_{zone}.txt"
+                        try:
+                            # Test if file exists by trying to get its size
+                            size = ftp.size(filename)
+                            if size is not None:
+                                all_files.append(filename)
+                                logger.info(f"  Found: {filename} (size: {size} bytes)")
+                        except:
+                            pass
 
         target_files = []
         for filename in all_files:
@@ -577,6 +625,13 @@ def ftp_download_task(config):
         logger.info(f"Discovered {len(target_files)} target files:")
         for filename in sorted(target_files):
             logger.info(f"  - {filename}")
+        
+        # Log summary of discovery process
+        logger.info(f"\nDISCOVERY SUMMARY:")
+        logger.info(f"  Total files found: {len(all_files)}")
+        logger.info(f"  Target files matching patterns: {len(target_files)}")
+        logger.info(f"  Patterns used: {config['file_patterns']}")
+        logger.info(f"  File extension filter: {config['file_extension']}")
 
         if not target_files:
             return {
@@ -610,6 +665,8 @@ def ftp_download_task(config):
 
             except Exception as e:
                 logger.error(f"Failed to download {filename}: {e}")
+                logger.error(f"  Error type: {type(e).__name__}")
+                logger.error(f"  Error details: {str(e)}")
                 failed_downloads.append(filename)
 
                 if local_filepath.exists():
