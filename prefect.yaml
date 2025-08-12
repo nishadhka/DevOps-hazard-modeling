@@ -26,9 +26,9 @@ deployments:
     # Entry point - local file for deployment, runtime path handled by working_dir
     entrypoint: "ftp_to_gcs_sync.py:hydrology_sync_flow"
     
-    # Work pool - using the existing geosfm-cloud-pool
+    # Work pool - using the existing geosfm-cloud-pool (with leading space)
     work_pool:
-      name: "geosfm-cloud-pool"
+      name: " geosfm-cloud-pool"
     
     # Scheduling - runs every day at midnight UTC
     schedule:
