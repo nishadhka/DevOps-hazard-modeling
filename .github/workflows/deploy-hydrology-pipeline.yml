@@ -144,7 +144,7 @@ jobs:
           echo "Deploying to Prefect Cloud..."
           
           # Deploy all deployments defined in prefect.yaml
-          prefect deploy --all --no-prompt
+          prefect deploy --all
           
           echo "Deployment completed successfully!"
 
