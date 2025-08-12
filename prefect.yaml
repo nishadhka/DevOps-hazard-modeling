@@ -46,6 +46,14 @@ deployments:
         - "python-dotenv>=1.0.0"
         - "google-auth>=2.17.0"
         - "google-oauth2-tool>=0.0.3"
+      env:
+        FTP_HOST: "{{ prefect.blocks.string.ftp-host }}"
+        FTP_USERNAME: "{{ prefect.blocks.secret.ftp-username }}"
+        FTP_PASSWORD: "{{ prefect.blocks.secret.ftp-password }}"
+        FTP_PATH: "{{ prefect.blocks.string.ftp-path }}"
+        FTP_PORT: "21"
+        GCS_BUCKET: "{{ prefect.blocks.string.gcs-bucket }}"
+        GOOGLE_APPLICATION_CREDENTIALS: "credentials/gcs-key.json"
     
     # Retry configuration
     flow_run_name: "hydrology-sync-{{ now() }}"
