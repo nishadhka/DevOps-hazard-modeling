@@ -2,6 +2,9 @@
 geosfm/env.txt 
 *.json
 *.txt
+# But include important config files
+!requirements.txt
+!.env.example
 data/
 */data/
 **/data/

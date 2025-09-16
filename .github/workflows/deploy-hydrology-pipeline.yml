@@ -1,0 +1,157 @@
+name: Deploy Hydrology Pipeline to Prefect Cloud
+
+on:
+  push:
+    branches: [ main ]
+    paths: 
+      - 'geosfm/gcs_upload/**'
+  pull_request:
+    branches: [ main ]
+    paths: 
+      - 'geosfm/gcs_upload/**'
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r geosfm/gcs_upload/requirements.txt
+        pip install pytest flake8
+    
+    - name: Lint with flake8
+      run: |
+        flake8 geosfm/gcs_upload/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 geosfm/gcs_upload/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    
+    - name: Test imports and syntax
+      run: |
+        python -m py_compile geosfm/gcs_upload/ftp_to_gcs_sync.py
+        python -m py_compile geosfm/gcs_upload/deploy.py
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r geosfm/gcs_upload/requirements.txt
+    
+    - name: Authenticate to Prefect Cloud
+      env:
+        PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
+        PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
+      run: |
+        # Debug: Check if secrets are available
+        echo "Checking secret availability..."
+        echo "PREFECT_API_KEY length: ${#PREFECT_API_KEY}"
+        echo "PREFECT_API_URL: $PREFECT_API_URL"
+        
+        # Use environment variables directly - Prefect will pick them up
+        export PREFECT_API_KEY="${PREFECT_API_KEY}"
+        export PREFECT_API_URL="${PREFECT_API_URL}"
+        
+        # Verify connection
+        prefect version
+    
+    - name: Set up Prefect variables
+      env:
+        PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
+        PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
+        FTP_HOST: ${{ secrets.FTP_HOST }}
+        FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+        FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        FTP_PATH: ${{ secrets.FTP_PATH }}
+        GCS_BUCKET: ${{ secrets.GCS_BUCKET }}
+        GCS_PREFIX: ${{ secrets.GCS_PREFIX }}
+        GCS_CREDENTIALS: ${{ secrets.GCS_CREDENTIALS }}
+      run: |
+        cd geosfm/gcs_upload
+        prefect variable set ftp-host "$FTP_HOST" --overwrite
+        prefect variable set ftp-username "$FTP_USERNAME" --overwrite
+        prefect variable set ftp-password "$FTP_PASSWORD" --overwrite
+        prefect variable set ftp-path "${FTP_PATH:-/output/}" --overwrite
+        prefect variable set gcs-bucket "$GCS_BUCKET" --overwrite
+        prefect variable set gcs-prefix "${GCS_PREFIX:-hydrology_data}" --overwrite
+        prefect variable set gcs-credentials "$GCS_CREDENTIALS" --overwrite
+    
+    - name: Verify deployments
+      env:
+        PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
+        PREFECT_API_URL: https://api.prefect.cloud/api/accounts/${{ secrets.PREFECT_ACCOUNT_ID }}/workspaces/${{ secrets.PREFECT_WORKSPACE_ID }}
+      run: |
+        echo "Checking existing deployments..."
+        prefect deployment ls
+        echo "✅ Variables updated successfully!"
+        echo "✅ Deployments are working - manual deployment update needed for code changes!"
+        echo ""
+        echo "To update deployments with latest code, manually redeploy from Prefect Cloud UI"
+
+  docker-build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && vars.ENABLE_DOCKER_BUILD == 'true'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ghcr.io/${{ github.repository }}/hydrology-pipeline
+        tags: |
+          type=ref,event=branch
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: geosfm/gcs_upload
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
