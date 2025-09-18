@@ -26,15 +26,12 @@ RIM2D is a super fast 2D hydraulic inundation model designed for fluvial and plu
 
 ### 1. Install NVIDIA HPC SDK 2025 (Version 25.7)
 ```bash
-# Download NVIDIA HPC SDK 2025 (8.3GB - ensure sufficient space)
-wget https://developer.download.nvidia.com/hpc-sdk/25.7/nvhpc_2025_257_Linux_x86_64_cuda_12.9.tar.gz
-
-# Extract the archive
-tar xpzf nvhpc_2025_257_Linux_x86_64_cuda_12.9.tar.gz
-
-# Install (requires sudo for system-wide installation)
-sudo ./nvhpc_2025_257_Linux_x86_64_cuda_12.9/install
-
+# Download NVIDIA HPC SDK 2025 (>4.3GB - ensure sufficient space)
+wget https://developer.download.nvidia.com/hpc-sdk/ubuntu/amd64/nvhpc-25-7_25.7-0_amd64.deb
+sudo apt install ./nvhpc-25-7_25.7-0_amd64.deb
+sudo apt --fix-broken install
+sudo apt install ./nvhpc-25-7_25.7-0_amd64.deb
+nvfortran --version
 # Add to PATH (add to ~/.bashrc for permanent)
 export PATH=/opt/nvidia/hpc_sdk/Linux_x86_64/25.7/compilers/bin:$PATH
 export LD_LIBRARY_PATH=/opt/nvidia/hpc_sdk/Linux_x86_64/25.7/compilers/lib:$LD_LIBRARY_PATH
@@ -43,18 +40,8 @@ export LD_LIBRARY_PATH=/opt/nvidia/hpc_sdk/Linux_x86_64/25.7/compilers/lib:$LD_L
 nvfortran --version
 ```
 
-**Alternative: Package Manager Installation (RHEL/CentOS/Fedora)**
-```bash
-sudo dnf config-manager --add-repo https://developer.download.nvidia.com/hpc-sdk/rhel/nvhpc.repo
-sudo dnf install -y nvhpc-25.7
-```
-
 ### 2. Set Environment Variables
 ```bash
-# Set environment variables for netcdf-fortran compiled with nvfortran
-export NETCDF_LIB="-L/home/roller/Desktop/rim2d/lib -lnetcdff -lnetcdf"
-export NETCDF_INCLUDE="-I/home/roller/Desktop/rim2d/include"
-export LD_LIBRARY_PATH="/home/roller/Desktop/rim2d/lib:$LD_LIBRARY_PATH"
 
 # Set preferred compilers
 export FC=nvfortran
@@ -83,7 +70,7 @@ which autoconf || { echo "FATAL: autoconf required"; exit 1; }
 which libtool || { echo "FATAL: libtool required"; exit 1; }
 ```
 
-### 4. Install NetCDF Dependencies
+### 4. Compile NetCDF Dependencies, RIM2D requeires the NETCDF compiled with nvfortran
 ```bash
 # Install NetCDF libraries compiled with nvfortran
 # This script compiles: zlib-ng → HDF5 → NetCDF-C → NetCDF-Fortran
