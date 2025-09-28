@@ -19,6 +19,10 @@ Usage:
     python validate_geosfm_inputs.py --validate --detailed  # Detailed analysis
     python validate_geosfm_inputs.py --remediate            # Auto-fix issues
     python validate_geosfm_inputs.py --analyze-csv         # CSV source analysis
+    python validate_geosfm_inputs.py --validate --detailed --analyze-csv\
+           --ic-input zone_output/lt_stable_input_20250925 \
+           --cc-input zone_output/lt_stable_input_20250926 \
+           --source-csv flox_output/flox_results_lean_long_table_v3_20250926.csv
 """
 
 import os

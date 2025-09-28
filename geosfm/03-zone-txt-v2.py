@@ -20,11 +20,11 @@ required for hydrological model initialization by preserving 13+ years of histor
 
 Usage:
   python 03-zone-txt-v2.py \
-    --lean-table flox_output/flox_results_lean_long_table_v3_20250722.csv \
-    --shapefile geofsm-prod-all-zones-20240712_v2_simplfied.geojson \
-    --output-dir zone_output \
-    --date-str 20250722 \
-    --hindcast-source-dir test_input/zone_output/lt_stable_input_20250501
+     --lean-table flox_output/flox_results_lean_long_table_v3_20250926.csv \
+     --shapefile geofsm-prod-all-zones-20240712_v2_simplfied.geojson \
+     --output-dir zone_output \
+     --date-str 20250926 \
+     --hindcast-source-dir zone_output/lt_stable_input_20250925
 """
 
 import os
@@ -738,7 +738,7 @@ class ZoneWiseTxtGeneratorV2:
                     raise ValueError(f"Invalid hindcast source directory: {hindcast_source_dir}")
             else:
                 # Auto-detect from test_input/zone_output
-                auto_hindcast_dir = "test_input/zone_output/lt_stable_input_20250501"
+                auto_hindcast_dir = "zone_output/lt_stable_input_20250925"
                 if os.path.exists(auto_hindcast_dir):
                     logger.info(f"Auto-detected hindcast source: {auto_hindcast_dir}")
                     self.set_hindcast_source_directory(auto_hindcast_dir)

@@ -24,6 +24,8 @@ Critical V3 Change:
 - Significantly more efficient as it avoids computation on NULL data
 
 Based on create_regridded_icechunk_memory_optimized_v9.py date alignment methodology.
+
+python 02-flox-groupby.py --date-str 20250926
 """
 
 import os
