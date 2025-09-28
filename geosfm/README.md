@@ -78,6 +78,13 @@ python 03-zone-txt.py \
 ```
 **What it does:** 🚨 **CRITICAL**: Preserves existing hydrological ordering headers from zone files; maps spatial aggregation results to zone-specific positions; generates rain.txt and evap.txt files for GeoSFM model input.
 
+
+```
+sudo apt update
+sudo apt install zip -y
+zip -r geosfm_zone_output.zip zone_output/
+```
+
 ### Output Structure
 ```
 📁 Raw Data:
