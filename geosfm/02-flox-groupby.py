@@ -25,7 +25,11 @@ Critical V3 Change:
 
 Based on create_regridded_icechunk_memory_optimized_v9.py date alignment methodology.
 
-python 02-flox-groupby.py --date-str 20250926
+#python 02-flox-groupby.py --date-str 20250926
+
+python 02-flox-groupby.py \
+       --date-str 20250926 \
+       --upload-gcs-parquet --gcs-bucket geosfm --service-account-key /path/to/key.json
 """
 
 import os
