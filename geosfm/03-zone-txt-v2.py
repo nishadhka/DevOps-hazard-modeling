@@ -57,16 +57,18 @@ class ZoneWiseTxtGeneratorV2:
 
     # Variable encoding from flox processor
     VARIABLE_ENCODING = {
-        1: 'imerg_precipitation',      # IMERG observations
+        1: 'imerg_precipitation',      # IMERG observations (latest obs)
         2: 'pet',                      # Potential Evapotranspiration
-        3: 'chirps_gefs_precipitation' # CHIRPS-GEFS forecasts
+        3: 'chirps_gefs_precipitation', # CHIRPS-GEFS forecasts
+        4: 'riverdepth',               # River depth (model output, not used here)
+        5: 'streamflow'                # Streamflow (model output, not used here)
     }
 
-    # File assignment mapping
+    # File assignment mapping for zone txt generation
     FILE_MAPPING = {
-        1: 'rain.txt',  # IMERG -> rain
+        1: 'rain.txt',  # IMERG observations -> rain
         2: 'evap.txt',  # PET -> evap
-        3: 'rain.txt'   # CHIRPS-GEFS -> rain
+        3: 'rain.txt'   # CHIRPS-GEFS forecasts -> rain (combined with var 1)
     }
 
     def __init__(self, config: Optional[Dict] = None):

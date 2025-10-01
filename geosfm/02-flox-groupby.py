@@ -62,10 +62,15 @@ except ImportError:
 
 try:
     from google.cloud import storage as gcs
+    from google.oauth2 import service_account
+    import pyarrow as pa
+    import pyarrow.parquet as pq
     GCS_AVAILABLE = True
-except ImportError:
+    PARQUET_AVAILABLE = True
+except ImportError as e:
     GCS_AVAILABLE = False
-    print("Warning: Google Cloud Storage not available. GCS upload functionality disabled.")
+    PARQUET_AVAILABLE = False
+    print(f"Warning: Google Cloud Storage or PyArrow not available. GCS/Parquet upload functionality disabled. ({e})")
 
 # Configure logging (will be updated with date_str in processor initialization)
 logger = logging.getLogger(__name__)
@@ -126,6 +131,7 @@ class FloxProcessorV3:
             "convert_to_long_table": True,
             "use_dask_cluster": False,
             "upload_to_gcs": False,
+            "upload_to_gcs_parquet": False,
 
             # Spatial parameters
             "pixel_size": 0.02,  # 0.02 degree resolution as requested
@@ -141,6 +147,8 @@ class FloxProcessorV3:
             # GCS parameters
             "gcs_bucket": None,
             "gcs_prefix": "flox_results",
+            "gcs_parquet_name": "cloud_geosfm_input.parquet",
+            "service_account_key": None,
 
             # Variables to process (actual names from dataset)
             "variables": ["chirps_gefs_precipitation", "imerg_precipitation", "pet"],
@@ -535,15 +543,17 @@ class FloxProcessorV3:
     def convert_to_lean_long_table(self, results: Dict[str, xr.Dataset]) -> pd.DataFrame:
         """
         Convert groupby results to optimized lean long table format
-        
+
         V3 Change: No NULL filtering needed here as it's done at dataset level
 
         New lean table structure:
         - gtime: YYYYMMDDTHH format (geosfm model time with T separator)
-        - zones_id: Zone identifier
+        - zone_id: Zone identifier
+        - zone_nu: Zone number (set to 1 by default)
         - variable: Encoded as 1=imerg, 2=pet, 3=chirps
         - mean_value: Float value for the variable
         - processed_at: YYYYMMDDTHH format
+        - source_date: Source date in YYYYMMDD format
 
         Args:
             results: Dictionary of groupby results (pre-filtered)
@@ -582,11 +592,14 @@ class FloxProcessorV3:
                     zone_column = 'groups'
                 elif 'zones' in df.columns:
                     zone_column = 'zones'
-                
+
                 if zone_column:
-                    df = df.rename(columns={zone_column: 'zones_id'})
+                    df = df.rename(columns={zone_column: 'zone_id'})
                 else:
                     logger.error(f"  No suitable zone column found in: {list(df.columns)}")
+
+                # Add zone_nu column (set to 1 by default)
+                df['zone_nu'] = 1
 
                 # Format time to YYYYMMDDTHH (geosfm model time with T separator)
                 if 'time' in df.columns:
@@ -594,7 +607,7 @@ class FloxProcessorV3:
                     df = df.drop(columns=['time'])  # Remove original time column
 
                 # Keep only essential columns in lean format
-                essential_columns = ['gtime', 'zones_id', 'variable', 'mean_value']
+                essential_columns = ['gtime', 'zone_id', 'zone_nu', 'variable', 'mean_value']
                 df = df[essential_columns]
 
                 all_dfs.append(df)
@@ -607,12 +620,15 @@ class FloxProcessorV3:
                 # Add processing timestamp in YYYYMMDDTHH format
                 combined_df['processed_at'] = datetime.now().strftime('%Y%m%dT%H')
 
+                # Add source_date from config date_str (YYYYMMDD format)
+                combined_df['source_date'] = self.config["date_str"]
+
                 # Reorder columns for optimal lean format
-                final_columns = ['gtime', 'zones_id', 'variable', 'mean_value', 'processed_at']
+                final_columns = ['gtime', 'zone_id', 'zone_nu', 'variable', 'mean_value', 'processed_at', 'source_date']
                 combined_df = combined_df[final_columns]
 
                 # Sort for better organization
-                combined_df = combined_df.sort_values(['gtime', 'zones_id', 'variable']).reset_index(drop=True)
+                combined_df = combined_df.sort_values(['gtime', 'zone_id', 'variable']).reset_index(drop=True)
 
                 logger.info(f"✅ Lean long table created: {len(combined_df)} total records")
                 logger.info(f"  Columns: {list(combined_df.columns)}")
@@ -635,6 +651,116 @@ class FloxProcessorV3:
         except Exception as e:
             logger.error(f"❌ Failed to convert to lean long table: {e}")
             raise
+
+    def upload_to_gcs_parquet(self, df: pd.DataFrame) -> bool:
+        """
+        Upload DataFrame to GCS as Parquet with append functionality
+
+        Args:
+            df: DataFrame to upload
+
+        Returns:
+            bool: Success status
+        """
+        if not self.config["upload_to_gcs_parquet"]:
+            logger.info("GCS Parquet upload disabled")
+            return False
+
+        if not GCS_AVAILABLE or not PARQUET_AVAILABLE:
+            logger.warning("GCS or PyArrow not available, skipping Parquet upload")
+            return False
+
+        if self.config["gcs_bucket"] is None:
+            logger.warning("GCS bucket not specified, skipping Parquet upload")
+            return False
+
+        logger.info("=" * 70)
+        logger.info("UPLOADING TO GCS AS PARQUET WITH APPEND")
+        logger.info("=" * 70)
+
+        try:
+            bucket_name = self.config["gcs_bucket"]
+            parquet_name = self.config["gcs_parquet_name"]
+            service_account_key = self.config.get("service_account_key")
+
+            logger.info(f"Bucket: gs://{bucket_name}/{parquet_name}")
+            logger.info(f"New data: {len(df):,} rows")
+
+            # Initialize GCS client
+            if service_account_key and Path(service_account_key).exists():
+                logger.info(f"Using service account: {service_account_key}")
+                credentials = service_account.Credentials.from_service_account_file(
+                    service_account_key
+                )
+                gcs_client = gcs.Client(credentials=credentials)
+            else:
+                logger.info("Using default credentials (ADC)")
+                gcs_client = gcs.Client()
+
+            bucket = gcs_client.bucket(bucket_name)
+            blob = bucket.blob(parquet_name)
+
+            # Convert new data to PyArrow Table
+            new_table = pa.Table.from_pandas(df, preserve_index=False)
+            logger.info(f"New table: {len(new_table):,} rows")
+
+            # Download existing Parquet if it exists
+            existing_table = None
+            if blob.exists():
+                logger.info("Downloading existing Parquet file...")
+                temp_download = f"/tmp/existing_{parquet_name}"
+                blob.download_to_filename(temp_download)
+                existing_table = pq.read_table(temp_download)
+                logger.info(f"Existing table: {len(existing_table):,} rows")
+                os.remove(temp_download)
+
+            # Append or use new table
+            if existing_table is not None:
+                logger.info("Appending to existing table...")
+                combined_table = pa.concat_tables([existing_table, new_table])
+                logger.info(f"Combined (before dedup): {len(combined_table):,} rows")
+
+                # Deduplicate
+                combined_df = combined_table.to_pandas()
+                original_len = len(combined_df)
+                combined_df = combined_df.drop_duplicates()
+                deduped_len = len(combined_df)
+                duplicates_removed = original_len - deduped_len
+
+                logger.info(f"Duplicates removed: {duplicates_removed:,}")
+                logger.info(f"Final rows: {deduped_len:,}")
+
+                final_table = pa.Table.from_pandas(combined_df, preserve_index=False)
+            else:
+                logger.info("No existing file, using new data only")
+                final_table = new_table
+
+            # Write to temporary file with optimized compression
+            temp_upload = f"/tmp/upload_{parquet_name}"
+            pq.write_table(
+                final_table,
+                temp_upload,
+                compression='snappy',
+                use_dictionary=True,
+                write_statistics=True
+            )
+
+            file_size_mb = os.path.getsize(temp_upload) / 1024 / 1024
+            logger.info(f"Parquet file size: {file_size_mb:.2f} MB")
+
+            # Upload to GCS
+            blob.upload_from_filename(temp_upload, content_type='application/octet-stream')
+            os.remove(temp_upload)
+
+            logger.info(f"✅ Successfully uploaded Parquet to GCS")
+            logger.info(f"  URL: gs://{bucket_name}/{parquet_name}")
+            logger.info(f"  Total rows: {len(final_table):,}")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ Failed to upload Parquet to GCS: {e}")
+            return False
 
     def upload_to_gcs(self, df: pd.DataFrame, client: Optional[Client] = None) -> bool:
         """
@@ -714,8 +840,11 @@ class FloxProcessorV3:
             # Step 6: Convert to lean long table (no NULL filtering needed)
             df = self.convert_to_lean_long_table(results)
 
-            # Step 7: Upload to GCS (optional)
+            # Step 7: Upload to GCS as CSV (optional)
             upload_success = self.upload_to_gcs(df, client)
+
+            # Step 8: Upload to GCS as Parquet with append (optional)
+            parquet_upload_success = self.upload_to_gcs_parquet(df)
 
             # Cleanup
             if client:
@@ -732,7 +861,8 @@ class FloxProcessorV3:
             logger.info(f"Total duration: {duration}")
             logger.info(f"Records processed: {len(df) if not df.empty else 0}")
             logger.info(f"Variables processed: {len(results)}")
-            logger.info(f"GCS upload: {'Success' if upload_success else 'Skipped/Failed'}")
+            logger.info(f"GCS CSV upload: {'Success' if upload_success else 'Skipped/Failed'}")
+            logger.info(f"GCS Parquet upload: {'Success' if parquet_upload_success else 'Skipped/Failed'}")
             logger.info(f"V3 Dataset-level NULL filtering applied ✅")
             logger.info(f"Maximum efficiency achieved by filtering at xarray stage ✅")
 
@@ -748,8 +878,10 @@ def main():
     parser.add_argument("--date-str", type=str, help="Date string for file naming (e.g., 20250731)")
     parser.add_argument("--create-tiff", action="store_true", help="Enable tiff creation")
     parser.add_argument("--use-dask", action="store_true", help="Enable Dask cluster")
-    parser.add_argument("--upload-gcs", action="store_true", help="Enable GCS upload")
+    parser.add_argument("--upload-gcs", action="store_true", help="Enable GCS CSV upload")
+    parser.add_argument("--upload-gcs-parquet", action="store_true", help="Enable GCS Parquet upload with append")
     parser.add_argument("--gcs-bucket", type=str, help="GCS bucket name for upload")
+    parser.add_argument("--service-account-key", type=str, help="Path to service account JSON key file")
 
     args = parser.parse_args()
 
@@ -769,8 +901,12 @@ def main():
         processor.config["use_dask_cluster"] = True
     if args.upload_gcs:
         processor.config["upload_to_gcs"] = True
+    if args.upload_gcs_parquet:
+        processor.config["upload_to_gcs_parquet"] = True
     if args.gcs_bucket:
         processor.config["gcs_bucket"] = args.gcs_bucket
+    if args.service_account_key:
+        processor.config["service_account_key"] = args.service_account_key
 
     # Run workflow
     processor.run_complete_workflow()
