@@ -72,6 +72,10 @@ hazard-env/
 /geofsm-prod-all-zones-20240712
 
 
-PET 
+PET
 zone_wise_txt_files
 .aider*
+
+# GeoSFM files
+ea_geofsm_zones_002deg.tif
+geofsm-prod-all-zones-20240712_v2_simplfied.geojson
