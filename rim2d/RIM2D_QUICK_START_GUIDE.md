@@ -1,7 +1,16 @@
 # RIM2D Quick Start Guide
 
+Updates in https://github.com/icpac-igad/rim2d-ibf/tree/main
+
 ## Overview
 RIM2D is a super fast 2D hydraulic inundation model designed for fluvial and pluvial flood simulation that runs on NVIDIA GPUs using CUDA Fortran.
+RIM2D is coded in Fortran90 and runs the simulations on GPUs. Compiling thus requires a NVIDIA CUDA enabled Fortran compiler.
+
+The source code of the mode is available at gitlab, for access please contact
+Developed by Section 4.4 Hydrology of the GFZ German Research Centre for
+Geoscience Dr. Heiko Apel, heiko.apel@gfz-potsdam.de, Helmholtz Centre Potsdam 
+GFZ German Research Centre for Geosciences, Section
+4.4 Hydrology, 14473 Potsdam, Germany
 
 ## GPU Status Check
 ✅ **NVIDIA GPU Detected**: GeForce RTX 5050 (8GB VRAM)
