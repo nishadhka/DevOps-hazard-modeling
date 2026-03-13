@@ -8,7 +8,7 @@ geosfm/env.txt
 data/
 */data/
 **/data/
-
+*/credentials/
 # Environment variables
 .env
 .env.local
