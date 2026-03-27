@@ -1,0 +1,6 @@
+I have computed some impacts with the flood data you sent me. I used the max_flood_depth over the entire simulation. You can see in the attached plots I am sending you:
+Flood impacts computed with the GloFAS-based approach (Abuhamad_ICPAC_SDN_SDN_2024-08-24_5lt_max_step_gf4_max_disrupted_access.png). Directly affected people: 361, people losing access to roads: 535, people losing access to healthcare: 799
+Flood impacts computed with RIM2D x GEOFSM (Abuhamad_ICPAC_SDN_nile_v11_wd_max.nc_disrupted_access.png) . Directly affected people: 518, people losing access to roads: 1428, people losing access to healthcare: 1687
+Satellite-detected flood extents and impacts to healthcare infrastructure (abuhamad_max_step_qt_mem_flood_damage_sat_g4.png)
+
+What do you think? To me it is difficult to say which one is closer to the observed flood extents or impacts. In my opinion we do not need to go that much into the details; just saying that the number of people affected can change to a factor of almost 2 when using different flood data is already an interesting observation. I would focus more on doing an agnostic uncertainty and sensitivity analysis without spending time on saying which data is better. Or what did you have in mind regarding "correcting" the RIM2D flood data? Please let me know what you think of it.
