@@ -1,0 +1,86 @@
+# RIM2D model definition file (version 2.0)
+# NBO v2 — 2026-03-06 Flash Flood Event (Compound Pluvial + Fluvial)
+# Gauge-interpolated rainfall | 90 river entry points | C=0.85 saturated
+# Simulation: 2026-03-06T16:00:00Z + 24h
+
+###### INPUT RASTERS ######
+**DEM**
+../v1/input/dem.nc
+**buildings**
+../v1/input/buildings.nc
+**IWD**
+file
+../v1/input/iwd.nc
+**roughness**
+file
+../v1/input/roughness.nc
+**pervious_surface**
+../v1/input/pervious_surface.nc
+**sealed_surface**
+../v1/input/sealed_surface.nc
+**sewershed**
+../v1/input/sewershed_v1_full.nc
+
+###### BOUNDARIES ######
+**fluvial_boundary**
+input/inflowlocs_v2.txt
+
+###### RAINFALL (gauge-interpolated, 30-min timesteps) ######
+**pluvial_raster_nr**
+48
+**pluvial_dt**
+1800
+**pluvial_start**
+0
+**pluvial_base_fn**
+input/rain/rain_v2_t
+
+###### OUTPUT FILE SPECIFICATIONS ######
+**output_base_fn**
+output/nbo_v2_
+**out_cells**
+input/outflowlocs_v2.txt
+**out_timing_nr**
+48
+**out_timing**
+1800 3600 5400 7200 9000 10800 12600 14400 16200 18000 19800 21600 23400 25200 27000 28800 30600 32400 34200 36000 37800 39600 41400 43200 45000 46800 48600 50400 52200 54000 55800 57600 59400 61200 63000 64800 66600 68400 70200 72000 73800 75600 77400 79200 81000 82800 84600 86400
+
+###### MODEL PARAMETERS ######
+**dt**
+1
+**sim_dur**
+86400
+**inf_rate**
+0
+**sewer_cap**
+0
+**sewer_threshold**
+0.002
+**alpha**
+0.4
+**theta**
+0.8
+
+###### FLAGS ######
+**verbose**
+.TRUE.
+**routing**
+.TRUE.
+**superverbose**
+.FALSE.
+**neg_wd_corr**
+.TRUE.
+**sew_sub**
+.FALSE.
+none
+**fluv_bound**
+.TRUE.
+input/fluvbound_mask_v2.nc
+**full_out**
+.FALSE.
+**closed_boundaries**
+.FALSE.
+**sheetflow_roughness**
+.TRUE.
+
+# end
