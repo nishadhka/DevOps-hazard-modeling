@@ -1,0 +1,44 @@
+# ETH — Addis Akaki River
+## RIM2D simulation case
+
+**Event**: River flood, Akaki river, Addis Ababa
+**Period**: 2021-08-16 to 2021-08-18
+**Country**: ETH
+**Domain**: lon [38.6, 38.9]  lat [8.8, 9.1]
+**Resolution**: MERIT DEM 30 m (target)
+**Rainfall**: IMERG v7 Final, 2021-08-16 – 2021-08-18
+**Model**: RIM2D GPU-accelerated 2D hydraulic inundation (flex .def format)
+
+---
+
+## Version history
+
+| Version | Description | Status |
+|---------|-------------|--------|
+| v1 | Initial domain setup — DEM clip, IMERG download, inflowlocs | planned |
+
+---
+
+## Setup
+
+```bash
+# Prepare inputs
+micromamba run -n zarrv3 python run_v1_setup.py
+
+# Run simulation
+export LD_LIBRARY_PATH=/data/rim2d/lib:$LD_LIBRARY_PATH
+/data/rim2d/bin/RIM2D simulation_v1.def --def flex
+
+# Visualize
+micromamba run -n zarrv3 python analysis/visualize_v1.py
+```
+
+---
+
+## DEM conditioning reference
+
+See `../../sdn/nile_2024/v24/` for the full reference pipeline including:
+- 4-connected Bresenham channel burn rasterization
+- Pysheds 2-pass depression fill (float64)
+- Pysheds 8-dir vs RIM2D 4-dir routing mismatch documentation:
+  `../../sdn/nile_2024/v24/analysis/BRESENHAM_4CONNECTED_NOTE.md`

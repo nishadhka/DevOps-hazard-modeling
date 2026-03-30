@@ -1,0 +1,88 @@
+# RIM2D v1 — Khartoum Omdurman (placeholder)
+# Event:   2019-08-01 to 2019-09-10
+# Country: SDN
+# Bbox:    lon [32.2, 32.8]  lat [15.3, 15.9]
+#
+# This is a placeholder definition file.
+# Run run_v1_setup.py to generate a populated version.
+#
+###### INPUT RASTERS ######
+**DEM**
+input/dem_v1.nc
+**buildings**
+input/buildings.nc
+**IWD**
+file
+input/iwd.nc
+**roughness**
+file
+input/roughness.nc
+**pervious_surface**
+input/pervious_surface.nc
+**sealed_surface**
+input/sealed_surface.nc
+**sewershed**
+input/sewershed.nc
+
+###### BOUNDARIES ######
+**fluvial_boundary**
+input/inflowlocs_v1.txt
+
+**pluvial_raster_nr**
+288
+**pluvial_dt**
+1800
+**pluvial_start**
+0
+**pluvial_base_fn**
+input/rain/imerg_v1_t
+
+###### OUTPUT ######
+**output_base_fn**
+output/v1_
+**out_cells**
+input/outflowlocs.txt
+**out_timing_nr**
+24
+**out_timing**
+21600 43200 64800 86400 108000 129600 151200 172800 194400 216000 237600 259200 280800 302400 324000 345600 367200 388800 410400 432000 453600 475200 496800 518400
+
+###### MODEL PARAMETERS ######
+**dt**
+1
+**sim_dur**
+518400
+**inf_rate**
+0
+**sewer_cap**
+0
+**sewer_threshold**
+0.002
+**alpha**
+0.4
+**theta**
+0.8
+
+###### FLAGS ######
+**verbose**
+.TRUE.
+**routing**
+.TRUE.
+**superverbose**
+.FALSE.
+**neg_wd_corr**
+.TRUE.
+**sew_sub**
+.FALSE.
+none
+**fluv_bound**
+.TRUE.
+input/fluvbound_mask_v1.nc
+**full_out**
+.FALSE.
+**closed_boundaries**
+.FALSE.
+**sheetflow_roughness**
+.TRUE.
+
+# end
