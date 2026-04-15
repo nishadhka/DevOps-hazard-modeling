@@ -1,0 +1,148 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "01",
+        "region": "Djibouti_City",
+        "country": "DJI",
+        "event_period": "2019-11-21 to 2019-11-23"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[42.5, 11.4], [43.3, 11.4], [43.3, 11.8], [42.5, 11.8], [42.5, 11.4]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "02",
+        "region": "Rwanda_National",
+        "country": "RWA",
+        "event_period": "2023-05-01 to 2023-05-06"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[29.75, -2.30], [30.40, -2.30], [30.40, -1.70], [29.75, -1.70], [29.75, -2.30]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "03",
+        "region": "Kenya_Central_Nairobi",
+        "country": "KEN",
+        "event_period": "2024-04-24 to 2024-04-25"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[36.6, -1.402], [37.1, -1.402], [37.1, -1.098], [36.6, -1.098], [36.6, -1.402]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "04",
+        "region": "Addis_Akaki_River",
+        "country": "ETH",
+        "event_period": "2021-08-16 to 2021-08-18"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[38.60, 8.80], [38.90, 8.80], [38.90, 9.10], [38.60, 9.10], [38.60, 8.80]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "05",
+        "region": "Somalia_South",
+        "country": "SOM",
+        "event_period": "2023-11-19 to 2023-11-21"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[45.15, 1.90], [45.45, 1.90], [45.45, 2.20], [45.15, 2.20], [45.15, 1.90]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "06",
+        "region": "South_Sudan_Upper_Nile",
+        "country": "SSD",
+        "event_period": "2019-10-15 to 2019-12-15"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[31.45, 4.70], [31.75, 4.70], [31.75, 5.00], [31.45, 5.00], [31.45, 4.70]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "07",
+        "region": "Khartoum_Omdurman_Bahri",
+        "country": "SDN",
+        "event_period": "2019-08-01 to 2019-09-10"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[32.20, 15.30], [32.80, 15.30], [32.80, 15.90], [32.20, 15.90], [32.20, 15.30]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "08",
+        "region": "Dar_es_Salaam_Urban",
+        "country": "TZA",
+        "event_period": "2024-04-10 to 2024-04-17"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[39.05, -7.05], [39.45, -7.05], [39.45, -6.60], [39.05, -6.60], [39.05, -7.05]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "09",
+        "region": "Uganda_Central",
+        "country": "UGA",
+        "event_period": "2019-05-26 to 2019-05-28"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[32.35, 0.20], [32.85, 0.20], [32.85, 0.55], [32.35, 0.55], [32.35, 0.20]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "10",
+        "region": "Burundi_National",
+        "country": "BDI",
+        "event_period": "2024-04-01 to 2024-04-22"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[29.20, -3.55], [29.50, -3.55], [29.50, -3.15], [29.20, -3.15], [29.20, -3.55]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "11",
+        "region": "Eritrea_Highlands",
+        "country": "ERI",
+        "event_period": "2019-08-10 to 2019-08-15"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[38.88, 15.25], [39.05, 15.25], [39.05, 15.40], [38.88, 15.40], [38.88, 15.25]]]
+      }
+    }
+  ]
+}
