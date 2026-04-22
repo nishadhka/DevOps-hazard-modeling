@@ -1,0 +1,119 @@
+# Wflow SBM Configuration for Kenya Drought Simulation
+# Period: 2020-01-01 to 2023-12-31 (1430 days)
+# Wflow v1.0.1 compatible with 3 soil layers [100, 300, 800] mm
+
+dir_input = "data/input"
+dir_output = "data/output"
+
+[time]
+starttime = 2020-01-01T00:00:00
+endtime = 2023-11-30T00:00:00
+
+[logging]
+loglevel = "info"
+
+[input]
+path_forcing = "forcing.nc"
+path_static = "staticmaps.nc"
+
+# Core drainage network variables
+basin__local_drain_direction = "wflow_ldd"
+river_location__mask = "wflow_river"
+subbasin_location__count = "wflow_subcatch"
+
+[input.forcing]
+atmosphere_water__precipitation_volume_flux = "precip"
+land_surface_water__potential_evaporation_volume_flux = "pet"
+atmosphere_air__temperature = "temp"
+
+[input.static]
+# Snow parameters
+atmosphere_air__snowfall_temperature_threshold = "TT"
+atmosphere_air__snowfall_temperature_interval = "TTI"
+
+# Water fraction
+land_water_covered__area_fraction = "WaterFrac"
+
+# Snow melt parameters
+snowpack__melting_temperature_threshold = "TTM"
+snowpack__degree_day_coefficient = "Cfmax"
+
+# Soil parameters
+soil_layer_water__brooks_corey_exponent = "c"
+soil_surface_water__infiltration_reduction_parameter = "cf_soil"
+soil_surface_water__vertical_saturated_hydraulic_conductivity = "KsatVer"
+soil_water__vertical_saturated_hydraulic_conductivity_scale_parameter = "f"
+compacted_soil_surface_water__infiltration_capacity = "InfiltCapPath"
+soil_water__residual_volume_fraction = "thetaR"
+soil_water__saturated_volume_fraction = "thetaS"
+soil_water_saturated_zone_bottom__max_leakage_volume_flux = "MaxLeakage"
+compacted_soil__area_fraction = "PathFrac"
+soil_wet_root__sigmoid_function_shape_parameter = "rootdistpar"
+soil__thickness = "SoilThickness"
+
+# Vegetation parameters
+vegetation_canopy_water__mean_evaporation_to_mean_precipitation_ratio = "EoverR"
+vegetation_canopy__light_extinction_coefficient = "Kext"
+vegetation__specific_leaf_storage = "Sl"
+vegetation_wood_water__storage_capacity = "Swood"
+vegetation_root__depth = "RootingDepth"
+
+# River parameters
+river__length = "wflow_riverlength"
+river_water_flow__manning_n_parameter = "N_River"
+river__slope = "RiverSlope"
+river__width = "wflow_riverwidth"
+
+# Surface flow parameters
+land_surface_water_flow__manning_n_parameter = "N"
+land_surface__slope = "Slope"
+
+# Subsurface parameters
+subsurface_water__horizontal_to_vertical_saturated_hydraulic_conductivity_ratio = "KsatHorFrac"
+
+[input.cyclic]
+vegetation__leaf_area_index = "LAI"
+
+[model]
+# Wflow v1.0.1 requires exactly 3 soil layers
+soil_layer__thickness = [100, 300, 800]
+type = "sbm"
+reservoir__flag = false
+snow__flag = true
+
+[output.csv]
+path = "output_kenya.csv"
+
+# Discharge at main basin outlet (Tana River region)
+[[output.csv.column]]
+coordinate.x = 41.9019
+coordinate.y = 0.7591
+header = "Q"
+parameter = "river_water__volume_flow_rate"
+
+# Basin-average groundwater recharge
+[[output.csv.column]]
+header = "recharge"
+parameter = "soil_water_saturated_zone_top__recharge_volume_flux"
+reducer = "mean"
+
+# Basin-average soil moisture (volumetric water content) - Layer 1 (top 100mm)
+[[output.csv.column]]
+header = "soil_moisture_L1"
+parameter = "soil_layer_water__volume_fraction"
+reducer = "mean"
+layer = 1
+
+# Basin-average soil moisture - Layer 2 (100-400mm root zone)
+[[output.csv.column]]
+header = "soil_moisture_L2"
+parameter = "soil_layer_water__volume_fraction"
+reducer = "mean"
+layer = 2
+
+# Basin-average soil moisture - Layer 3 (400-1200mm deep soil)
+[[output.csv.column]]
+header = "soil_moisture_L3"
+parameter = "soil_layer_water__volume_fraction"
+reducer = "mean"
+layer = 3

@@ -1,0 +1,306 @@
+"""
+Wflow SBM Drought Simulation - Region Configurations
+East Africa Drought Events (11 cases)
+
+Each case defines a regional hydrological model domain for drought impact
+analysis using Wflow.jl v1.0.1 (SBM). Configurations include bounding box,
+simulation period, impact context, and current model status.
+
+Reference: https://icpac-igad.github.io/e4drr/blog/2025-04-drought-events/
+"""
+
+# All 11 drought event regions with their configurations
+REGIONS = {
+    "01_Burundi": {
+        "country_iso": "BDI",
+        "title": "Burundi",
+        "start": "2021-01-01",
+        "end": "2022-12-31",
+        "bounds": {
+            "west": 28.83,
+            "south": -4.50,
+            "east": 30.89,
+            "north": -2.29,
+        },
+        "grid_size": (245, 212),
+        "active_cells": 35000,
+        "outlet": {"lon": 29.2267, "lat": -4.4961, "river": "Ruzizi River", "upstream_km2": 5000},
+        "description": "22 consecutive days of zero recharge mid-2021; discharge near-zero Jun-Aug 2021",
+        "impact": {"people_affected": None, "detail": "Drought impact on Ruzizi basin"},
+        "status": "complete",
+        "case_folder": "dr_bdi/dr_case1",
+    },
+    "02_Djibouti": {
+        "country_iso": "DJI",
+        "title": "Djibouti",
+        "start": "2021-01-01",
+        "end": "2023-12-31",
+        "bounds": {
+            "west": 41.50,
+            "south": 10.90,
+            "east": 43.50,
+            "north": 12.70,
+        },
+        "grid_size": (201, 224),
+        "active_cells": 39708,
+        "outlet": {"lon": 41.5965, "lat": 11.1975, "river": "Coastal outlet", "upstream_km2": 6316},
+        "description": "194K food insecure (Oct 2022), 6.1% inflation",
+        "impact": {"people_affected": 194000, "detail": "194K food insecure, 6.1% inflation"},
+        "status": "complete",
+        "case_folder": "dr_dji/dr_case2",
+    },
+    "03_Eritrea": {
+        "country_iso": "ERI",
+        "title": "Eritrea - Central Highlands",
+        "start": "2021-01-01",
+        "end": "2023-12-31",
+        "bounds": {
+            "west": 36.33,
+            "south": 12.40,
+            "east": 43.15,
+            "north": 18.00,
+        },
+        "grid_size": (628, 758),
+        "active_cells": 312179,
+        "outlet": {"lon": 36.3324, "lat": 14.2697, "river": "Western outlet", "upstream_km2": 63956},
+        "description": "Largest domain (6x Burundi); blocked by Wflow BoundsError bug",
+        "impact": {"people_affected": None, "detail": "Drought impact assessment pending simulation"},
+        "status": "blocked",
+        "case_folder": "dr_eri/dr_case3",
+    },
+    "04_Ethiopia": {
+        "country_iso": "ETH",
+        "title": "Ethiopia - Blue Nile Headwaters",
+        "start": "2020-01-02",
+        "end": "2023-11-30",
+        "bounds": {
+            "west": 33.0,
+            "south": 3.0,
+            "east": 48.0,
+            "north": 15.0,
+        },
+        "grid_size": (1671, 1351),
+        "active_cells": None,
+        "outlet": {"lon": 33.1523, "lat": 15.1231, "river": "Blue Nile headwaters", "upstream_km2": None},
+        "description": "24.1M in drought areas, 4.5M livestock deaths, southern/southeastern regions",
+        "impact": {"people_affected": 24100000, "detail": "24.1M in drought areas, 4.5M livestock deaths"},
+        "status": "complete",
+        "case_folder": "dr_eth/dr_case4",
+    },
+    "05_Kenya": {
+        "country_iso": "KEN",
+        "title": "Kenya - Tana River Basin / ASAL",
+        "start": "2020-01-02",
+        "end": "2023-11-30",
+        "bounds": {
+            "west": 34.0,
+            "south": -4.7,
+            "east": 41.9,
+            "north": 5.0,
+        },
+        "grid_size": (1083, 881),
+        "active_cells": 954123,
+        "outlet": {"lon": 41.9019, "lat": 0.6603, "river": "Tana River", "upstream_km2": 166337},
+        "description": "4.5M food shortage, 222K children malnourished in ASAL regions",
+        "impact": {"people_affected": 4500000, "detail": "4.5M food shortage, 222K children malnourished"},
+        "status": "complete",
+        "case_folder": "dr_ken/dr_case5",
+    },
+    "06_Rwanda": {
+        "country_iso": "RWA",
+        "title": "Rwanda - Akagera River Basin",
+        "start": "2016-01-01",
+        "end": "2017-12-31",
+        "bounds": {
+            "west": 28.80,
+            "south": -2.90,
+            "east": 30.90,
+            "north": -1.00,
+        },
+        "grid_size": (212, 234),
+        "active_cells": 49608,
+        "outlet": {"lon": 30.8976, "lat": -2.0796, "river": "Akagera River", "upstream_km2": 19039},
+        "description": "250K affected by food shortages, eastern province; reference template for all cases",
+        "impact": {"people_affected": 250000, "detail": "0.25M food shortage, eastern province"},
+        "status": "complete",
+        "case_folder": "dr_rwa/dr_case6",
+    },
+    "07_Somalia": {
+        "country_iso": "SOM",
+        "title": "Somalia - South-Central",
+        "start": "2020-01-01",
+        "end": "2023-12-31",
+        "bounds": {
+            "west": 40.0,
+            "south": -1.5,
+            "east": 51.5,
+            "north": 12.0,
+        },
+        "grid_size": None,
+        "active_cells": None,
+        "outlet": None,
+        "description": "2.48M affected, 1.2M displaced; multi-season rainfall failure",
+        "impact": {"people_affected": 2480000, "detail": "2.48M affected, 1.2M displaced (Deyr drought)"},
+        "status": "planned",
+        "case_folder": None,
+    },
+    "08_South_Sudan": {
+        "country_iso": "SSD",
+        "title": "South Sudan - Upper Nile",
+        "start": "2021-01-01",
+        "end": "2023-12-31",
+        "bounds": {
+            "west": 24.0,
+            "south": 3.5,
+            "east": 36.0,
+            "north": 12.2,
+        },
+        "grid_size": None,
+        "active_cells": None,
+        "outlet": None,
+        "description": "1.4M affected; drought-flood compound events in Upper Nile",
+        "impact": {"people_affected": 1400000, "detail": "1.4M affected, drought-flood compound events"},
+        "status": "planned",
+        "case_folder": None,
+    },
+    "09_Sudan": {
+        "country_iso": "SDN",
+        "title": "Sudan - Eastern States",
+        "start": "2021-01-01",
+        "end": "2023-12-31",
+        "bounds": {
+            "west": 21.8,
+            "south": 8.7,
+            "east": 38.6,
+            "north": 22.2,
+        },
+        "grid_size": None,
+        "active_cells": None,
+        "outlet": None,
+        "description": "Drought and conflict compounding food insecurity in Kassala, Gedaref, Sennar",
+        "impact": {"people_affected": None, "detail": "Drought-conflict compound crisis"},
+        "status": "planned",
+        "case_folder": None,
+    },
+    "10_Tanzania": {
+        "country_iso": "TZA",
+        "title": "Tanzania - Kagera River Basin",
+        "start": "2022-01-01",
+        "end": "2023-12-31",
+        "bounds": {
+            "west": 29.30,
+            "south": -11.70,
+            "east": 40.50,
+            "north": -1.00,
+        },
+        "grid_size": (1198, 1248),
+        "active_cells": 1495104,
+        "outlet": {"lon": 29.2986, "lat": -3.3552, "river": "Kagera River", "upstream_km2": 292488},
+        "description": "2.2M affected, 70% crop failure in northern regions",
+        "impact": {"people_affected": 2200000, "detail": "2.2M food shortage, 70% crop failure (north)"},
+        "status": "complete",
+        "case_folder": "dr_tza/dr_case10",
+    },
+    "11_Uganda": {
+        "country_iso": "UGA",
+        "title": "Uganda - Karamoja Subregion",
+        "start": "2021-01-01",
+        "end": "2022-12-31",
+        "bounds": {
+            "west": 32.80,
+            "south": 1.00,
+            "east": 34.90,
+            "north": 3.80,
+        },
+        "grid_size": (313, 235),
+        "active_cells": 73555,
+        "outlet": {"lon": 32.8020, "lat": 1.5226, "river": "NW boundary outlet", "upstream_km2": 34773},
+        "description": "518K emergency, 900+ hunger deaths in Karamoja subregion",
+        "impact": {"people_affected": 518000, "detail": "518K emergency conditions, 900+ hunger deaths"},
+        "status": "complete",
+        "case_folder": "dr_uga/dr_case11",
+    },
+}
+
+# Wflow SBM default model parameters (common across all cases)
+WFLOW_SBM_DEFAULTS = {
+    "model": "sbm",
+    "wflow_version": "1.0.1",
+    "resolution_km": 1,
+    "timestep": "daily",
+    "soil_layers": 3,
+    "soil_layer_thickness_mm": [100, 300, 800],
+    "brooks_corey_workaround_layers": 4,
+    "julia_threads": 4,
+    "forcing_sources": ["CHIRPS", "ERA5"],
+}
+
+# Input GeoTIFF datasets required per region (10 core files)
+INPUT_DATASETS = {
+    "dem": {"source": "MERIT Hydro", "variables_derived": ["elevation", "slope", "ldd", "upstream_area"]},
+    "landcover": {"source": "ESA WorldCover", "variables_derived": ["manning_n", "rooting_depth", "canopy"]},
+    "theta_s": {"source": "SoilGrids", "variables_derived": ["thetaS (saturated water content)"]},
+    "theta_r": {"source": "SoilGrids", "variables_derived": ["thetaR (residual water content)"]},
+    "ksat": {"source": "SoilGrids", "variables_derived": ["KsatVer (saturated hydraulic conductivity)"]},
+    "soil_thickness": {"source": "SoilGrids", "variables_derived": ["SoilThickness"]},
+    "brooks_corey_c": {"source": "SoilGrids", "variables_derived": ["c (Brooks-Corey exponent)"]},
+    "lai": {"source": "MODIS", "variables_derived": ["LAI (12 monthly maps)"]},
+    "chirps": {"source": "UCSB CHIRPS", "variables_derived": ["precipitation (daily forcing)"]},
+    "era5": {"source": "ECMWF CDS", "variables_derived": ["temperature", "potential_evaporation"]},
+}
+
+# Manning's roughness coefficients by ESA WorldCover land cover class
+MANNING_COEFFICIENTS = {
+    "tree_cover": 0.20,
+    "shrubland": 0.10,
+    "grassland": 0.06,
+    "cropland": 0.06,
+    "built_up": 0.02,
+    "bare_sparse": 0.04,
+    "water": 0.04,
+    "wetland": 0.10,
+    "river_default": 0.035,
+}
+
+
+def get_bbox_tuple(region_name):
+    """Get bounding box as (west, south, east, north) tuple."""
+    bounds = REGIONS[region_name]["bounds"]
+    return (bounds["west"], bounds["south"], bounds["east"], bounds["north"])
+
+
+def get_all_regions():
+    """Get list of all region names."""
+    return list(REGIONS.keys())
+
+
+def get_complete_regions():
+    """Get list of regions with completed simulations."""
+    return [r for r, cfg in REGIONS.items() if cfg["status"] == "complete"]
+
+
+def get_planned_regions():
+    """Get list of regions planned but not yet simulated."""
+    return [r for r, cfg in REGIONS.items() if cfg["status"] == "planned"]
+
+
+def get_blocked_regions():
+    """Get list of regions blocked by technical issues."""
+    return [r for r, cfg in REGIONS.items() if cfg["status"] == "blocked"]
+
+
+def get_total_affected():
+    """Get total people affected across all documented drought events."""
+    return sum(
+        cfg["impact"]["people_affected"]
+        for cfg in REGIONS.values()
+        if cfg["impact"]["people_affected"] is not None
+    )
+
+
+def get_region_by_iso(iso_code):
+    """Get region config by ISO country code."""
+    for name, cfg in REGIONS.items():
+        if cfg["country_iso"] == iso_code:
+            return name, cfg
+    return None, None

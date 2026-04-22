@@ -1,0 +1,19 @@
+======================================================================
+PREPARE WFLOW FORCING FILE - DJIBOUTI (OPTIMIZED)
+======================================================================
+
+Input directories:
+  CHIRPS: /mnt/hydromt_data/bdi_trail2/dr_case2/02_Djibouti_2021_2023/data/chirps/daily
+  ERA5: /mnt/hydromt_data/bdi_trail2/dr_case2/02_Djibouti_2021_2023/data/era5
+
+Output file: /mnt/hydromt_data/bdi_trail2/dr_case2/data/input/forcing.nc
+
+======================================================================
+LOADING DATA WITH DASK (LAZY LOADING)
+======================================================================
+
+[1/3] Loading CHIRPS precipitation (lazy)...
+  Found 1064 CHIRPS files
+  Processing in chunks of 50 files...
+  Chunk 1/22...
+  ✗ Error loading CHIRPS: No module named 'dask'

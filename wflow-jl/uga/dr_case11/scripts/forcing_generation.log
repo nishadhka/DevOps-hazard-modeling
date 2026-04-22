@@ -1,0 +1,45 @@
+======================================================================
+PREPARE WFLOW FORCING FILE - UGANDA (2021-2022) - FINE RESOLUTION
+======================================================================
+
+Output: /Users/sinugp/Desktop/Personal/Documents2/Nishadh/Xee/hydromt_wflow_core_spatial/climate_data_downloads/11_Uganda_2021_2022/forcing/forcing.nc
+
+[1/3] Loading CHIRPS precipitation at native resolution...
+  Found 699 CHIRPS files
+  Processing chunk 1/4 (files 1-200)...
+  Processing chunk 2/4 (files 201-400)...
+  Processing chunk 3/4 (files 401-600)...
+  Processing chunk 4/4 (files 601-699)...
+  Concatenating chunks...
+  ✓ CHIRPS shape: (699, 56, 42)
+  ✓ Grid size: 56 x 42
+
+[2/3] Loading ERA5 temperature...
+  ✓ Temperature shape: (730, 12, 9)
+  Interpolating to CHIRPS grid...
+  ✓ Interpolated shape: (730, 56, 42)
+
+[3/3] Loading ERA5 PET...
+  ✓ PET shape: (730, 12, 9)
+  Interpolating to CHIRPS grid...
+  ✓ Interpolated shape: (730, 56, 42)
+
+[4/4] Creating forcing dataset...
+  Common time steps: 699
+
+  ✓ Forcing dataset created
+    Time: 730 days
+    Grid: 56 x 42
+    Variables: ['precip', 'temp', 'pet']
+
+Saving to: /Users/sinugp/Desktop/Personal/Documents2/Nishadh/Xee/hydromt_wflow_core_spatial/climate_data_downloads/11_Uganda_2021_2022/forcing/forcing.nc
+
+======================================================================
+FORCING FILE COMPLETE!
+======================================================================
+✓ Output: /Users/sinugp/Desktop/Personal/Documents2/Nishadh/Xee/hydromt_wflow_core_spatial/climate_data_downloads/11_Uganda_2021_2022/forcing/forcing.nc
+✓ Size: 5.5 MB
+✓ Time: 0.3 minutes
+✓ Info: /Users/sinugp/Desktop/Personal/Documents2/Nishadh/Xee/hydromt_wflow_core_spatial/climate_data_downloads/11_Uganda_2021_2022/forcing/forcing_info.json
+
+======================================================================
