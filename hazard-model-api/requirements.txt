@@ -1,0 +1,26 @@
+# Core
+numpy>=1.24
+netCDF4>=1.6
+xarray>=2024.1
+rioxarray>=0.15
+rasterio>=1.3
+
+# Geo
+geopandas>=0.14
+shapely>=2.0
+pyproj>=3.6
+
+# GEE
+earthengine-api>=0.1.400
+
+# Overture Maps CLI (for buildings + roads)
+overturemaps>=0.9
+
+# Hydro
+pyflwdir>=0.5.8
+
+# HTTP (CHIRPS, TIPG API)
+requests>=2.31
+
+# TOML writing for Wflow config
+tomli-w>=1.0

@@ -1,0 +1,12 @@
+worldcover_class,description,manning_n
+10,trees,0.050
+20,shrubland,0.040
+30,grassland,0.035
+40,cropland,0.035
+50,built-up,0.025
+60,bare,0.030
+70,snow_ice,0.020
+80,permanent_water,0.025
+90,wetland,0.040
+95,mangroves,0.040
+100,moss_lichen,0.030
