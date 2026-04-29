@@ -31,8 +31,19 @@ Only code and configuration files are committed:
 - `analysis/*.py` — visualization and diagnostic scripts
 - `analysis/*.md` — methodology notes and conditioning reports
 
-## Active cases
+### To get the source code of RIM2D model
 
-| Country | Case | Versions | Notes |
-|---------|------|----------|-------|
-| Sudan (`sdn`) | `nile_2024` | v11–v24 | Aug 2024 Abu Hamad flash flood |
+RIM2D is a 2D hydraulic inundation model specifically designed for fluvial and
+pluvial flood simulation. RIM2D has simplified approaches implemented for
+simulating sewer system, roof drainage and infiltration. Thus it is well suited
+for fast urban inundation simulation. RIM2D is coded in Fortran90 and runs the
+simulations on GPUs. Compiling thus requires a NVIDIA CUDA enabled Fortran
+compiler.
+
+Developed by Section 4.4 Hydrology of the GFZ German Research Centre for
+Geoscience
+
+Repository created by Dr. Heiko Apel, heiko.apel@gfz-potsdam.de
+
+Helmholtz Centre Potsdam GFZ German Research Centre for Geosciences, Section
+4.4 Hydrology, 14473 Potsdam, Germany
