@@ -46,6 +46,15 @@ venv/
 ENV/
 env/
 hazard-env/
+.venv/
+.python-version
+
+# Julia
+julia_env/
+*.toml.bak
+
+# wflow-jl: generated artifacts go to HuggingFace dataset E4DRR/wflow.jl-simulations
+**/outputs/
 
 # Jupyter Notebook
 .ipynb_checkpoints
