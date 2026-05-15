@@ -55,6 +55,7 @@ julia_env/
 
 # wflow-jl: generated artifacts go to HuggingFace dataset E4DRR/wflow.jl-simulations
 **/outputs/
+**/outputs_*/
 
 # Jupyter Notebook
 .ipynb_checkpoints
