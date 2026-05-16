@@ -15,6 +15,7 @@ dependencies = [
     "pyogrio>=0.12.1",
     "python-dotenv>=1.2.2",
     "requests>=2.34.2",
+    "rioxarray>=0.22.0",
     "shapely>=2.1.2",
     "tqdm>=4.67.3",
     "xarray>=2026.4.0",
