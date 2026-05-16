@@ -56,6 +56,10 @@ julia_env/
 # wflow-jl: generated artifacts go to HuggingFace dataset E4DRR/wflow.jl-simulations
 **/outputs/
 **/outputs_*/
+# wflow run artifacts (heavy) -> HuggingFace; keep only .md/.toml in runs/
+wflow-jl/runs/**/output/
+wflow-jl/runs/**/wrsi/
+*.nc
 
 # Jupyter Notebook
 .ipynb_checkpoints
