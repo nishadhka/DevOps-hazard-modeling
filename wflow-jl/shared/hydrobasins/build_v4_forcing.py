@@ -78,8 +78,12 @@ def build_case(iso: str, era5: xr.Dataset) -> None:
     daily["precip"] = sub["tp"].resample(time="1D").sum() * 1000.0
     daily["temp"] = sub["t2m"].resample(time="1D").mean() - 273.15
     daily["pet"] = (-sub["pev"].resample(time="1D").sum() * 1000.0).clip(min=0)
-    # ascending coords for interp
+    # Load the SMALL ERA5-grid daily cube into RAM (e.g. ~30×30×1460 — tiny),
+    # then chunk by time so the large 1 km interp result stays lazy and
+    # to_netcdf streams it block-by-block (peak RAM ≈ one time chunk, not
+    # the full ~20 GB cube — the OOM that killed the big cases).
     daily = daily.sortby("latitude").sortby("longitude").load()
+    daily = daily.chunk({"time": 30})
 
     forcing = daily.interp(
         latitude=sm_lat.values, longitude=sm_lon.values, method="linear"
