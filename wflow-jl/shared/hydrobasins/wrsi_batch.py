@@ -35,7 +35,9 @@ REPO = Path(__file__).resolve().parents[2]
 JULIA = Path.home() / ".juliaup" / "bin" / "julia"
 JULIA_PROJECT = REPO / "julia_env"
 V3_DIR = REPO / "shared" / "hydrobasins" / "outputs_v3"
-RUNS = REPO / "runs"
+RUNS = REPO / "runs"  # small WRSI result grids/plots (-> git/HF)
+# Big daily gridded NetCDFs go to the 280 GB secondary volume, not /home (20 GB)
+HEAVY_OUT = Path("/mnt/wflow-secondary/wrsi_runs")
 CASE_ROOT = Path("/mnt/wflow-data/bdi_trail2")
 
 FAO_BOUNDS = [0, 50, 80, 150]
@@ -53,8 +55,9 @@ CASES = {
     "TZA": dict(case="dr_case10", toml="case_sbm.toml",     v3="10_tanzania_tza_v3"),
 }
 
-# Edit this to choose scope. Default = small/medium + ERI unblock test.
-SELECTED = ["BDI", "DJI", "UGA", "ERI"]
+# Edit this to choose scope. Heavy three, ascending compute order
+# (TZA 1.09e9 < KEN 1.36e9 < ETH 3.22e9 cell-days); ETH/riskiest last.
+SELECTED = ["TZA", "KEN", "ETH"]
 
 
 def make_wrsi_toml(iso: str, cfg: dict) -> tuple[Path, Path]:
@@ -65,7 +68,8 @@ def make_wrsi_toml(iso: str, cfg: dict) -> tuple[Path, Path]:
     text = src.read_text()
 
     run_dir = RUNS / f"{iso.lower()}_wrsi"
-    out_dir = run_dir / "output"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = HEAVY_OUT / f"{iso.lower()}_wrsi" / "output"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     in_abs = CASE_ROOT / cfg["case"] / "data" / "input"

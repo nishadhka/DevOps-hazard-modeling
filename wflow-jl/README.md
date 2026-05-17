@@ -1,6 +1,12 @@
 # Wflow.jl Hydrological Modeling - East Africa Drought Risk Cases
 
-Regional hydrological model builds and simulations using **Wflow.jl v1.0.1 (SBM)** for drought impact analysis across East Africa. Cases are organized by ISO country code, mirroring the rim2d repo structure.
+Regional hydrological model builds and simulations using **Wflow.jl v1.0.2 (SBM) on Julia 1.10** for drought impact analysis across East Africa. Cases are organized by ISO country code, mirroring the rim2d repo structure.
+
+> **End-to-end workflow** (basin selection → model build → simulation → gridded NetCDF → WRSI) is documented in **[`SIMULATION_WORKFLOW.md`](SIMULATION_WORKFLOW.md)** — the living document for this work.
+>
+> Heavy/generated artifacts (PNGs, GeoJSONs, NetCDFs, run outputs) are published to the HuggingFace dataset **`E4DRR/wflow.jl-simulations`**; only code + docs live in this public repo.
+>
+> **Toolchain pin:** Julia **1.10.x** + Wflow **v1.0.2**. Julia 1.12 causes a pre-timestep JIT-compile hang — do not use the juliaup `release` channel. **Security:** the GEE service-account JSON must never be committed (this repo is public); it is referenced from the gitignored `.secrets/` path only.
 
 ## Project Status
 

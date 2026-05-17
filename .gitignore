@@ -16,6 +16,17 @@ data/
 .env.test
 .env.production
 
+# Secrets — service-account keys must NEVER be committed (repo is public)
+.secrets/
+**/.secrets/
+*service-account*.json
+*-sa.json
+
+# Generated build/run scratch
+wflow-jl/.hydromt_extra/
+wflow-jl/runs/*_wrsi/
+wflow-jl/runs/*_v4_wrsi/
+
 # Prefect artifacts
 .prefect/
 
