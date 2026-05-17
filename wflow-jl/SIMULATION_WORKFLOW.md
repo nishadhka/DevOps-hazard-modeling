@@ -122,9 +122,11 @@ python download_dem.py        --bbox "$BBOX" --out "$OUT" --scale 1000 --target 
 python download_worldcover.py --bbox "$BBOX" --out "$OUT" --scale 1000
 python download_merit_hydro.py --bbox "$BBOX" --out "$OUT"
 python download_soilgrids.py  --bbox "$BBOX" --out "$OUT" --scale 1000
-# 2. forcing for the event period
-python download_chirps.py --bbox "$BBOX" --out "$OUT" --start "$START" --end "$END"
-python download_era5.py   --bbox "$BBOX" --out "$OUT" --start "$START" --end "$END"
+# 2. forcing — SINGLE SOURCE: ERA5 zarr (precip + temp + PET in one
+#    dataset). CHIRPS is dropped — a single forcing source removes the
+#    CHIRPS↔ERA5 grid/units reconciliation and keeps provenance simple.
+#    (Phase deferred; static maps built first.)
+# python download_era5.py  --bbox "$BBOX" --out "$OUT" --start "$START" --end "$END"
 # 3. staticmaps + LDD fix
 python prepare_wflow_staticmaps.py --bbox "$BBOX" --out "$OUT"
 python fix_ldd_pyflwdir.py         --staticmaps "$OUT/staticmaps.nc"
@@ -178,10 +180,35 @@ export GEE_SA_KEY=$PWD/wflow-jl/.secrets/ee-service-account.json
   our `.secrets` key; `download_dem.py --dry-run` on the BDI v4 bbox OK).
 - ✅ Build method aligned to `../hazard-model-api/` (bespoke exporter
   removed).
-- ⏭️ Next: drive the `hazard-model-api` pipeline over all 11 v4 bboxes
-  (downloads → staticmaps → fix_ldd → forcing → run → WRSI).
-- ⚠️ ERI needs a staticmaps `BoundsError` fix (data bug, independent of
-  the build pipeline).
+- ✅ **All 11 v4 static maps built** via `build_v4_models.py` (static-only;
+  forcing deferred). `/mnt/wflow-secondary/v4_models/<iso>/staticmaps.nc`,
+  uniform `layer=4`, 23 SBM vars, grids matching the v4 bboxes:
+
+  | case | size | grid (lat×lon) | | case | size | grid |
+  |---|---|---|---|---|---|---|
+  | BDI | 3.1 M | 171×158 | | SDN | 28 M | 591×420 |
+  | DJI | 3.5 M | 180×174 | | ETH | 84 M | 928×815 |
+  | ERI | 3.4 M | 142×210 | | SSD | 112 M | 1235×818 |
+  | RWA | 3.6 M | 186×173 | | SOM | 136 M | 1119×1096 |
+  | TZA | 9.4 M | 289×291 | | UGA | 11 M | 372×245 |
+  | KEN | 20 M | 393×446 | | | | |
+
+  Includes SOM/SSD/SDN — previously "planned" with **no inputs at all**;
+  the fresh GEE build gives all 11 domains static maps. Two canonical-
+  pipeline bugs fixed en route: `download_dem.py` merit target now writes
+  `dem.tif` at 1 km (was 90 m); `common.download_ee_tif` now tiles over
+  the GEE 48 MB `getDownloadURL` cap (was failing 7/11 large bboxes).
+- 🔀 **Forcing detour — single source, ERA5 zarr only.** Drop CHIRPS;
+  use the ERA5 zarr (total precipitation + 2 m temperature + potential
+  evaporation in one store) as the sole forcing input. Rationale: one
+  source removes the CHIRPS↔ERA5 grid/units/calendar reconciliation and
+  keeps forcing provenance single and auditable. ERA5 covers all three
+  Wflow SBM forcing fields. (Pending implementation.)
+- ⏭️ Next: (a) ERA5-zarr forcing → `forcing.nc` per v4 grid/period;
+  (b) wflow run (Julia 1.10 / Wflow v1.0.2) → gridded NetCDF → WRSI
+  clipped to `_v4_basin.geojson`.
+- ⚠️ ERI needs a staticmaps `BoundsError` fix (soil-layer-index data bug,
+  independent of the build pipeline; surfaces at wflow run time).
 
 ## Script map
 
