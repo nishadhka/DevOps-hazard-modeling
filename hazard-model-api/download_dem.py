@@ -70,9 +70,13 @@ def main():
         out = r.tif_dir / "dem.tif"
         download_ee_tif(image, bbox, out, scale=r.scale, crs=r.crs)
     else:
+        # MERIT elevation, resampled to the requested grid (e.g. --scale
+        # 1000 → 1 km). Named dem.tif: it is the reference grid that
+        # prepare_wflow_staticmaps.py expects, consistent with the
+        # merit_dir/merit_upa hydrography. (90 m raw is impractical to run.)
         image = ee.Image("MERIT/Hydro/v1_0_1").select("elv")
-        out = r.tif_dir / "merit_elv_90m.tif"
-        download_ee_tif(image, bbox, out, scale=90, crs=r.crs)
+        out = r.tif_dir / "dem.tif"
+        download_ee_tif(image, bbox, out, scale=r.scale, crs=r.crs)
 
     print(f"[done] {out}")
     return 0
