@@ -101,76 +101,96 @@ Validation (`shared/hydrobasins/wrsi_analysis.py`, `wrsi_batch.py`):
   (a soil-layer-index data bug, **not** version-related; v1.0.2 didn't fix
   it — needs a staticmaps repair).
 
-## 4. Model build for the v4 domain (fresh static maps)
+## 4. Model build for the v4 domain — use `../hazard-model-api/`
+
+**Do not write a bespoke exporter.** The repo already ships a canonical,
+region-agnostic download/prepare pipeline in **`../hazard-model-api/`** (flat,
+`--bbox`-driven, idempotent, `--dry-run` size estimates). It is the single
+source of truth for building model inputs for *any* bbox; the v4 build just
+feeds it each case's v4 bounding box. (An earlier session script,
+`gee_export_tiffs.py`, duplicated this and has been removed.)
 
 Rather than subset/clip the old country-extent staticmaps (which breaks the
 lateral drainage network at the cut edges), a **new model is built per v4
-bounding box**. Pipeline per case:
+bounding box**. Per case, with `BBOX` = the `<ev>_v4.geojson` bounds and
+`OUT` on the 280 GB secondary volume:
 
-1. **10 input GeoTIFFs** at 1 km for the v4 bbox (see §5).
-2. `derive_staticmaps.py` → `staticmaps.nc` (81 SBM variables).
-3. `fix_ldd_pyflwdir.py` → repair LDD cycles.
-4. Forcing: CHIRPS (precip) + ERA5 (PET, temp) → `forcing.nc` resampled to
-   the staticmaps grid.
-5. Run (§2) → gridded NetCDF → WRSI (§3).
+```bash
+cd ../hazard-model-api
+# 1. base 1 km grids (GEE)
+python download_dem.py        --bbox "$BBOX" --out "$OUT" --scale 1000 --target merit
+python download_worldcover.py --bbox "$BBOX" --out "$OUT" --scale 1000
+python download_merit_hydro.py --bbox "$BBOX" --out "$OUT"
+python download_soilgrids.py  --bbox "$BBOX" --out "$OUT" --scale 1000
+# 2. forcing for the event period
+python download_chirps.py --bbox "$BBOX" --out "$OUT" --start "$START" --end "$END"
+python download_era5.py   --bbox "$BBOX" --out "$OUT" --start "$START" --end "$END"
+# 3. staticmaps + LDD fix
+python prepare_wflow_staticmaps.py --bbox "$BBOX" --out "$OUT"
+python fix_ldd_pyflwdir.py         --staticmaps "$OUT/staticmaps.nc"
+# 4. run (see §2): julia +1.10 --project=julia_env ... ; then WRSI (§3)
+```
 
-The 10 TIFFs and the variables `derive_staticmaps.py` expects:
+`prepare_wflow_staticmaps.py` reads a documented `<out>/tif/` contract
+(`dem.tif`, `worldcover_classes.tif`, `merit_dir_90m.tif`, `merit_upa_90m.tif`,
+`soil_{sand,silt,clay}_250m.tif`, optional `soil_bedrock_depth_250m.tif`),
+applies its own pedotransfer (thetaS/thetaR from texture), and writes
+`staticmaps.nc` (80+ SBM variables) on the MERIT 1 km grid. The per-case
+inputs + big daily NetCDFs live on the 280 GB secondary volume, not in the
+repo or the small home disk.
 
-| TIFF | Source | Notes |
-|------|--------|-------|
-| `1_elevation_merit_1km` | MERIT-Hydro `elv` | hydrologically consistent with dir/upa |
-| `2_landcover_esa_1km` | ESA WorldCover v200 | class codes |
-| `3_soil_{sand,silt,clay}_1km` | SoilGrids `*_mean` | renormalised in derive |
-| `4_soil_rootzone_depth_1km` | soil-column proxy | used as SoilThickness |
-| `5_soil_ksat_1km` | Cosby pedotransfer (sand/clay) | clipped 1–5000 mm/day |
-| `5_soil_porosity_1km` | 1 − bulk-density/2.65 | texture fallback if implausible |
-| `6_river_flow_{direction,accumulation}_1km` | MERIT-Hydro `dir`/`upa` | D8 + km² |
+See `../hazard-model-api/README.md` → "Workflow: prepare a Wflow case" for
+the authoritative command list and per-source size table.
 
-Big daily NetCDFs and the per-case model inputs are stored on the 280 GB
-secondary volume, not in the repo or on the small home disk.
+## 5. Source data via Google Earth Engine — auth & the secret
 
-## 5. Source data via Google Earth Engine
-
-The 10 TIFFs are exported from Google Earth Engine
-(`shared/hydrobasins/gee_export_tiffs.py`). GEE clips and resamples global
-collections (MERIT-Hydro, ESA WorldCover, SoilGrids) to 1 km **server-side**
-and returns small per-bbox GeoTIFFs — no multi-tens-of-GB global download.
-At 1 km even the largest v4 bbox is a few MB per band, so a single
-`getDownloadURL` per layer suffices (no tiling).
+The `hazard-model-api` GEE scripts (`download_dem/worldcover/merit_hydro/`
+`soilgrids/era5`) clip + resample global collections (MERIT-Hydro, ESA
+WorldCover, SoilGrids, ERA5-Land) to the target grid **server-side** and
+return small per-bbox GeoTIFFs — no multi-tens-of-GB global download. At
+1 km even the largest v4 bbox is a few MB per band. `getDownloadURL` has a
+50 MB/image cap; scripts tile internally when needed.
 
 **Earth Engine auth — and the service-account secret:**
 
-- Authentication uses a Google service account that is *legacy
-  EE-registered*. Initialise with
-  `ee.Initialize(ee.ServiceAccountCredentials(email, key))` **without** a
-  `project=` argument — passing `project=` triggers a Cloud
-  `serviceusage.services.use` permission check that fails (it is **not** an
-  IAM grant problem; the bare init works).
-- **SECURITY: the service-account JSON must never be committed.** This repo
-  is public. The key is referenced only by a path:
-  - default: `wflow-jl/.secrets/ee-service-account.json` (the `.secrets/`
-    directory and all `*.json` / `*service-account*.json` are gitignored
-    repo-wide),
-  - or override via the env var `EE_SERVICE_ACCOUNT_KEY`.
-  No key material is embedded in any script — only a path reference.
+- `common.init_ee()` uses `ee.ServiceAccountCredentials(email, key)` then
+  `ee.Initialize(credentials=creds)` **without** a `project=` argument.
+  Passing `project=` triggers a Cloud `serviceusage.services.use` check that
+  fails for this account — it is **not** an IAM-grant problem; the bare
+  init works (verified: authenticates as the EE service account).
+- Key is supplied via `--sa-key PATH` or the env var **`GEE_SA_KEY`**.
+- **SECURITY — this repo is public; the service-account JSON must never be
+  committed.** Local copy lives at the gitignored
+  `wflow-jl/.secrets/ee-service-account.json`; `.secrets/`, `*.json`, and
+  `*service-account*.json` are gitignored repo-wide. No key material is
+  embedded in any script — only `--sa-key`/`GEE_SA_KEY` path references.
+
+```bash
+export GEE_SA_KEY=$PWD/wflow-jl/.secrets/ee-service-account.json
+```
 
 ## 6. Status
 
 - ✅ v4 basin selections finalised, reviewed, on HF (`hydrobasins/v4/`).
 - ✅ Wflow.jl toolchain validated (Julia 1.10 / Wflow v1.0.2; RWA WRSI).
 - ✅ WRSI routine validated (RWA/BDI/UGA track documented droughts).
-- ✅ GEE access verified; 10-TIFF exporter built + validated on BDI.
-- ⏭️ Next: parameterise the staticmaps/LDD driver, run Phase-1
-  (export → staticmaps → fix_ldd) for all 11 v4 bboxes, then forcing + runs.
-- ⚠️ ERI needs a staticmaps `BoundsError` fix (data bug, independent of the
-  build pipeline).
+- ✅ GEE access verified (canonical `hazard-model-api/common.init_ee` +
+  our `.secrets` key; `download_dem.py --dry-run` on the BDI v4 bbox OK).
+- ✅ Build method aligned to `../hazard-model-api/` (bespoke exporter
+  removed).
+- ⏭️ Next: drive the `hazard-model-api` pipeline over all 11 v4 bboxes
+  (downloads → staticmaps → fix_ldd → forcing → run → WRSI).
+- ⚠️ ERI needs a staticmaps `BoundsError` fix (data bug, independent of
+  the build pipeline).
 
-## Script map (`shared/hydrobasins/`)
+## Script map
+
+Build inputs — **`../hazard-model-api/`** (canonical, region-agnostic;
+see its README). This folder (`wflow-jl/shared/hydrobasins/`):
 
 | Script | Role |
 |--------|------|
 | `v4_recommended.py` | v4 basin selection → bbox + basin geojson + plots |
-| `gee_export_tiffs.py` | GEE → 10 input TIFFs per v4 bbox |
 | `wrsi_analysis.py` | WRSI from a gridded run (single case) |
 | `wrsi_batch.py` | WRSI over multiple built cases, v4-clipped |
 | `wrsi_v4_run.py` | bbox-subset run + WRSI for a v4 case |
