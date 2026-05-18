@@ -48,12 +48,14 @@ def repair(iso: str) -> str:
     for v in ds.data_vars:
         if v in RIVER_VARS or v.startswith("wflow_"):
             continue
-        arr = ds[v].values
-        if np.issubdtype(arr.dtype, np.floating) and np.isnan(arr).any():
-            n = int(np.isnan(arr).sum())
-            arr = np.where(np.isnan(arr), 0.0, arr)
-            ds[v] = (ds[v].dims, arr.astype("float32"))
-            msg.append(f"{v}~{n}")
+        arr = ds[v].values.astype("float64")
+        bad = ~np.isfinite(arr) | (arr == 0.0)  # NaN or sentinel-0 fill
+        if np.issubdtype(ds[v].values.dtype, np.floating) and bad.any():
+            valid = arr[np.isfinite(arr) & (arr != 0.0)]
+            med = float(np.median(valid)) if valid.size else 0.0
+            arr[bad] = med            # physical median, NOT 0 (0 thetaS/
+            ds[v] = (ds[v].dims, arr.astype("float32"))  # SoilThick → SBM nan
+            msg.append(f"{v}~{int(bad.sum())}@{med:.3g}")
     enc = {v: {"_FillValue": None} for v in ds.data_vars}
     ds.to_netcdf(fp, encoding=enc)
     return f"{iso}: " + (", ".join(msg) if msg else "no NaN (ok)")
