@@ -21,11 +21,15 @@ data/
 **/.secrets/
 *service-account*.json
 *-sa.json
+.netrc
+**/.netrc
 
 # Generated build/run scratch
 wflow-jl/.hydromt_extra/
 wflow-jl/runs/*_wrsi/
 wflow-jl/runs/*_v4_wrsi/
+# v4 plot/config staging dirs -> HuggingFace (v4_wrsi_plots, v4_staticmaps_plots, v4_models_config)
+wflow-jl/runs/v4_*/
 
 # Prefect artifacts
 .prefect/

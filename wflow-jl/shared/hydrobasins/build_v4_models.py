@@ -47,14 +47,17 @@ PERIOD = {c["country_iso"]: (c["start"], c["end"]) for c in REGIONS.values()}
 SELECTED = ["BDI", "ERI", "DJI", "RWA", "TZA", "UGA",
             "KEN", "SDN", "ETH", "SSD", "SOM"]
 
-# (script, needs_period, extra args). Comment out forcing for a static-only run.
+# (script, needs_period, extra args).
+# STATIC-ONLY phase: forcing (download_chirps/era5) is deferred — it is the
+# multi-hour bottleneck and prepare_wflow_staticmaps does not depend on it
+# (validated on BDI). Re-add the two forcing lines for the forcing phase.
 STEPS = [
     ("download_dem.py",        False, ["--scale", "1000", "--target", "merit"]),
     ("download_worldcover.py", False, ["--scale", "1000"]),
     ("download_merit_hydro.py", False, []),
     ("download_soilgrids.py",  False, ["--scale", "1000"]),
-    ("download_chirps.py",     True,  []),
-    ("download_era5.py",       True,  []),
+    # ("download_chirps.py",   True,  []),   # deferred (forcing phase)
+    # ("download_era5.py",     True,  []),   # deferred (forcing phase)
     ("prepare_wflow_staticmaps.py", True, []),  # requires --start/--end
 ]
 
