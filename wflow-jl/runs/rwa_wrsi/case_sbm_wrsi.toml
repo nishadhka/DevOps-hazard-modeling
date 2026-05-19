@@ -1,0 +1,114 @@
+# Wflow SBM — Rwanda (dr_case6) — WRSI new-direction run
+# Reuses the original dr_case6 inputs (read-only) by absolute path; writes
+# to a fresh writable output dir so the original data/output/ is untouched.
+# Adds gridded NetCDF output with the variables needed for the Water
+# Requirement Satisfaction Index (WRSI):
+#   - per-layer + root-zone soil moisture (volumetric water content)
+#   - actual transpiration + total actual evapotranspiration (AETc)
+#   - potential evaporation (for WRc = Kc * PET)
+# Period: 2016-01-01 to 2017-12-31 (730 days), 3 soil layers [100,300,800] mm
+
+dir_input = "/mnt/wflow-data/bdi_trail2/dr_case6/data/input"
+dir_output = "/home/sa_112625140081245282401/DevOps-hazard-modeling/wflow-jl/runs/rwa_wrsi/output"
+
+[time]
+starttime = 2016-01-01T00:00:00
+endtime = 2017-12-31T00:00:00
+
+[logging]
+loglevel = "info"
+path_log = "log.txt"
+
+[input]
+path_forcing = "forcing.nc"
+path_static = "staticmaps.nc"
+
+basin__local_drain_direction = "wflow_ldd"
+river_location__mask = "wflow_river"
+subbasin_location__count = "wflow_subcatch"
+
+[input.forcing]
+atmosphere_water__precipitation_volume_flux = "precip"
+land_surface_water__potential_evaporation_volume_flux = "pet"
+atmosphere_air__temperature = "temp"
+
+[input.static]
+atmosphere_air__snowfall_temperature_threshold = "TT"
+atmosphere_air__snowfall_temperature_interval = "TTI"
+land_water_covered__area_fraction = "WaterFrac"
+snowpack__melting_temperature_threshold = "TTM"
+snowpack__degree_day_coefficient = "Cfmax"
+soil_layer_water__brooks_corey_exponent = "c"
+soil_surface_water__infiltration_reduction_parameter = "cf_soil"
+soil_surface_water__vertical_saturated_hydraulic_conductivity = "KsatVer"
+soil_water__vertical_saturated_hydraulic_conductivity_scale_parameter = "f"
+compacted_soil_surface_water__infiltration_capacity = "InfiltCapPath"
+soil_water__residual_volume_fraction = "thetaR"
+soil_water__saturated_volume_fraction = "thetaS"
+soil_water_saturated_zone_bottom__max_leakage_volume_flux = "MaxLeakage"
+compacted_soil__area_fraction = "PathFrac"
+soil_wet_root__sigmoid_function_shape_parameter = "rootdistpar"
+soil__thickness = "SoilThickness"
+vegetation_canopy_water__mean_evaporation_to_mean_precipitation_ratio = "EoverR"
+vegetation_canopy__light_extinction_coefficient = "Kext"
+vegetation__specific_leaf_storage = "Sl"
+vegetation_wood_water__storage_capacity = "Swood"
+vegetation_root__depth = "RootingDepth"
+river__length = "wflow_riverlength"
+river_water_flow__manning_n_parameter = "N_River"
+river__slope = "RiverSlope"
+river__width = "wflow_riverwidth"
+land_surface_water_flow__manning_n_parameter = "N"
+land_surface__slope = "Slope"
+subsurface_water__horizontal_to_vertical_saturated_hydraulic_conductivity_ratio = "KsatHorFrac"
+
+[input.cyclic]
+vegetation__leaf_area_index = "LAI"
+
+[model]
+soil_layer__thickness = [100, 300, 800]
+type = "sbm"
+reservoir__flag = false
+snow__flag = true
+
+# --- Gridded NetCDF output for WRSI ---
+[output.netcdf_grid]
+path = "output_grid_wrsi.nc"
+compressionlevel = 1
+
+[output.netcdf_grid.variables]
+# per-layer volumetric water content (3-D: layer × y × x)
+soil_layer_water__volume_fraction = "vwc_layer"
+# root-zone integrated volumetric water content (2-D) — primary WRSI input
+soil_water_root_zone__volume_fraction = "vwc_rootzone"
+# actual transpiration (AETc component)
+soil_water__transpiration_volume_flux = "transpiration"
+# total actual evapotranspiration (alternative AETc)
+land_surface__evapotranspiration_volume_flux = "aet"
+# potential evaporation (denominator WRc = Kc * PET)
+land_surface_water__potential_evaporation_volume_flux = "pet"
+
+# --- Basin-mean CSV kept for a quick sanity series ---
+[output.csv]
+path = "output_rwanda_wrsi.csv"
+
+[[output.csv.column]]
+coordinate.x = 30.8976
+coordinate.y = -2.0796
+header = "Q"
+parameter = "river_water__volume_flow_rate"
+
+[[output.csv.column]]
+header = "sm_rootzone"
+parameter = "soil_water_root_zone__volume_fraction"
+reducer = "mean"
+
+[[output.csv.column]]
+header = "transpiration"
+parameter = "soil_water__transpiration_volume_flux"
+reducer = "mean"
+
+[[output.csv.column]]
+header = "pet"
+parameter = "land_surface_water__potential_evaporation_volume_flux"
+reducer = "mean"

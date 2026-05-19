@@ -16,6 +16,21 @@ data/
 .env.test
 .env.production
 
+# Secrets — service-account keys must NEVER be committed (repo is public)
+.secrets/
+**/.secrets/
+*service-account*.json
+*-sa.json
+.netrc
+**/.netrc
+
+# Generated build/run scratch
+wflow-jl/.hydromt_extra/
+wflow-jl/runs/*_wrsi/
+wflow-jl/runs/*_v4_wrsi/
+# v4 plot/config staging dirs -> HuggingFace (v4_wrsi_plots, v4_staticmaps_plots, v4_models_config)
+wflow-jl/runs/v4_*/
+
 # Prefect artifacts
 .prefect/
 
@@ -46,6 +61,20 @@ venv/
 ENV/
 env/
 hazard-env/
+.venv/
+.python-version
+
+# Julia
+julia_env/
+*.toml.bak
+
+# wflow-jl: generated artifacts go to HuggingFace dataset E4DRR/wflow.jl-simulations
+**/outputs/
+**/outputs_*/
+# wflow run artifacts (heavy) -> HuggingFace; keep only .md/.toml in runs/
+wflow-jl/runs/**/output/
+wflow-jl/runs/**/wrsi/
+*.nc
 
 # Jupyter Notebook
 .ipynb_checkpoints

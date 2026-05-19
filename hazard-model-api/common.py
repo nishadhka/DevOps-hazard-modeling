@@ -155,28 +155,87 @@ def ee_bbox(ee, r: Region):
     return ee.Geometry.Rectangle([r.west, r.south, r.east, r.north])
 
 
-def download_ee_tif(image, bbox_ee, path: Path, scale: int, crs: str) -> None:
-    """Download a single EE image to GeoTIFF via getDownloadURL."""
-    if path.exists():
-        print(f"[gee] cached: {path.name}")
-        return
+def _ee_get_to_tif(image, region, path_str: str, scale: int, crs: str) -> None:
     url = image.getDownloadURL({
-        "scale": scale,
-        "region": bbox_ee,
-        "format": "GEO_TIFF",
-        "crs": crs,
+        "scale": scale, "region": region,
+        "format": "GEO_TIFF", "crs": crs,
     })
     with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as tmp:
         tmp_path = tmp.name
     try:
         urllib.request.urlretrieve(url, tmp_path)
-        shutil.move(tmp_path, str(path))
+        shutil.move(tmp_path, path_str)
     except Exception:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         raise
-    size_mb = path.stat().st_size / 1e6
-    print(f"[gee] downloaded: {path.name} ({size_mb:.1f} MB)")
+
+
+def download_ee_tif(image, bbox_ee, path: Path, scale: int, crs: str) -> None:
+    """Download an EE image to GeoTIFF via getDownloadURL.
+
+    getDownloadURL has a hard 50,331,648-byte (48 MB) request cap. For large
+    bbox × fine-scale requests the region is split into an N×N grid of
+    sub-tiles (each safely under the cap), each fetched separately, then
+    mosaicked with rasterio. Small requests take the single-shot fast path.
+    """
+    import re
+
+    if path.exists():
+        print(f"[gee] cached: {path.name}")
+        return
+    try:
+        _ee_get_to_tif(image, bbox_ee, str(path), scale, crs)
+        print(f"[gee] downloaded: {path.name} "
+              f"({path.stat().st_size / 1e6:.1f} MB)")
+        return
+    except Exception as exc:
+        m = re.search(r"request size \((\d+) bytes\)", str(exc))
+        if m is None:
+            raise
+        req = int(m.group(1))
+
+    # tile: factor per axis so each tile is well under the 48 MB cap
+    import math
+    cap_safe = 40_000_000
+    factor = max(2, math.ceil(math.sqrt(req / cap_safe)))
+    coords = bbox_ee.bounds().getInfo()["coordinates"][0]
+    xs = [c[0] for c in coords]
+    ys = [c[1] for c in coords]
+    w, s, e, n = min(xs), min(ys), max(xs), max(ys)
+    dx = (e - w) / factor
+    dy = (n - s) / factor
+    print(f"[gee] {path.name}: {req/1e6:.0f} MB > 48 MB cap → "
+          f"{factor}×{factor} tiles")
+
+    import ee
+    import rasterio
+    from rasterio.merge import merge as rio_merge
+
+    tile_paths = []
+    tmpdir = tempfile.mkdtemp(prefix="eetiles_")
+    try:
+        for i in range(factor):
+            for j in range(factor):
+                tw, te = w + i * dx, w + (i + 1) * dx
+                ts, tn = s + j * dy, s + (j + 1) * dy
+                tile_region = ee.Geometry.Rectangle([tw, ts, te, tn])
+                tp = os.path.join(tmpdir, f"t_{i}_{j}.tif")
+                _ee_get_to_tif(image, tile_region, tp, scale, crs)
+                tile_paths.append(tp)
+        srcs = [rasterio.open(p) for p in tile_paths]
+        mosaic, transform = rio_merge(srcs)
+        meta = srcs[0].meta.copy()
+        meta.update(height=mosaic.shape[1], width=mosaic.shape[2],
+                    transform=transform)
+        for sds in srcs:
+            sds.close()
+        with rasterio.open(str(path), "w", **meta) as dst:
+            dst.write(mosaic)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    print(f"[gee] downloaded (tiled {factor}×{factor}): {path.name} "
+          f"({path.stat().st_size / 1e6:.1f} MB)")
 
 
 # ---------------------------------------------------------------------------
