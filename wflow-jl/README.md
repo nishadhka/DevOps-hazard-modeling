@@ -8,23 +8,40 @@ Regional hydrological model builds and simulations using **Wflow.jl v1.0.2 (SBM)
 >
 > **Toolchain pin:** Julia **1.10.x** + Wflow **v1.0.2**. Julia 1.12 causes a pre-timestep JIT-compile hang — do not use the juliaup `release` channel. **Security:** the GEE service-account JSON must never be committed (this repo is public); it is referenced from the gitignored `.secrets/` path only.
 
-## Project Status
+## Project Status — v4 (current)
 
-| ISO | Country | Case | Drought Period | Grid Size | Active Cells | Status |
-|-----|---------|------|---------------|-----------|--------------|--------|
-| bdi | Burundi | dr_case1 | 2021-2022 | 245 x 212 | 35,000 | complete |
-| dji | Djibouti | dr_case2 | 2021-2023 | 201 x 224 | 39,708 | complete |
-| eri | Eritrea | dr_case3 | 2021-2023 | 628 x 758 | 312,179 | blocked (BoundsError) |
-| eth | Ethiopia | dr_case4 | 2020-2023 | 1671 x 1351 | — | complete |
-| ken | Kenya | dr_case5 | 2020-2023 | 1083 x 881 | 954,123 | complete |
-| rwa | Rwanda | dr_case6 | 2016-2017 | 212 x 234 | 49,608 | complete |
-| sdn | Sudan | — | 2021-2023 | — | — | planned |
-| som | Somalia | — | 2020-2023 | — | — | planned |
-| ssd | South Sudan | — | 2021-2023 | — | — | planned |
-| tza | Tanzania | dr_case10 | 2022-2023 | 1198 x 1248 | 1,495,104 | complete |
-| uga | Uganda | dr_case11 | 2021-2022 | 313 x 235 | 73,555 | complete |
+The work has moved to the **v4** pipeline: HydroBASINS basin selection →
+fresh GEE staticmaps build (`../hazard-model-api/`) → **single-source
+EarthDataHub ERA5** forcing → Wflow SBM (Julia 1.10 / Wflow v1.0.2) →
+gridded WRSI. This supersedes the original per-country `dr_case*`
+v1.0.1 builds.
 
-**Overall: 7 of 11 cases operational (64%)**
+**10 / 11 v4 WRSI grids complete** (`/mnt/wflow-secondary/v4_models/<iso>/
+output/output_grid_wrsi.nc`); **ETH** is the sole open case (ldd-cycle —
+documented).
+
+| | Done (10) | Open (1) |
+|--|--|--|
+| ISO | BDI DJI ERI KEN RWA SDN SOM SSD TZA UGA | **ETH** |
+
+Notably v4 also delivers SOM/SSD/SDN — previously "planned" with **no
+inputs at all** — and unblocked ERI (the old v1.0.1 BoundsError does not
+recur on the v4 build).
+
+**Session docs (read these for the current state):**
+
+- [`SIMULATION_WORKFLOW.md`](SIMULATION_WORKFLOW.md) — end-to-end living workflow
+- [`shared/hydrobasins/V4_BASINS.md`](shared/hydrobasins/V4_BASINS.md) — finalised per-case basin selection
+- [`shared/hydrobasins/V4_RUN_OVERVIEW.md`](shared/hydrobasins/V4_RUN_OVERVIEW.md) — per-case staticmaps/forcing/run-time + ldd-method tables
+- [`shared/hydrobasins/ETH_BLOCK.md`](shared/hydrobasins/ETH_BLOCK.md) — the one open case (6-method ldd block + IHU plan)
+
+v4 pipeline scripts: `shared/hydrobasins/{v4_recommended, build_v4_models,
+build_v4_forcing, repair_v4_staticmaps, rebuild_ldd, run_v4_wflow,
+eth_ihu, upload_to_hf}.py`.
+
+> The original-build details below (`dr_case*`, per-case
+> `derive_staticmaps.py`, CHIRPS+ERA5) are **historical** — retained for
+> provenance; the v4 pipeline above is current.
 
 Reference: [ICPAC drought events](https://icpac-igad.github.io/e4drr/blog/2025-04-drought-events/) | [`region_configs.py`](region_configs.py)
 
