@@ -20,8 +20,14 @@ upa = rioxarray.open_rasterio(SRC/"tif/merit_upa_90m.tif").squeeze().values.asty
 d8 = d.values
 d8 = np.where(np.isin(d8,[1,2,4,8,16,32,64,128,0]), d8, 0).astype(np.uint8)
 tr90 = d.rio.transform()
+# full-native (~80M cells) IHU is unviable on this VM; decimate the
+# MERIT D8 by K (→ ~K^2 fewer cells) then IHU-upscale to ~1 km.
+from rasterio import Affine
+K = 3
+d8 = d8[::K, ::K]
+tr90 = Affine(tr90.a * K, tr90.b, tr90.c, tr90.d, tr90.e * K, tr90.f)
 flw = pyflwdir.from_array(d8, ftype="d8", transform=tr90, latlon=True)
-flw1, idx = flw.upscale(10, method="ihu")
+flw1, idx = flw.upscale(4, method="ihu")   # ~270 m → ~1 km
 ldd = flw1.to_array(ftype="ldd").astype("float32")
 ny, nx = flw1.shape
 a,b,c,e,f,g = flw1.transform[:6]
