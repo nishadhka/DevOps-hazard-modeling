@@ -35,12 +35,26 @@ import matplotlib.patches as mpatches  # noqa: E402
 import requests  # noqa: E402
 import xarray as xr  # noqa: E402
 from matplotlib.collections import LineCollection  # noqa: E402
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes  # noqa: E402
 
 V4 = Path("/mnt/wflow-secondary/v4_models")
 HERE = Path(__file__).resolve().parent
 GEOJSON_DIR = HERE / "outputs_v4"
+COUNTRIES_PATH = HERE / "ea_ghcf_simple.geojson"  # ICPAC GHA 11-country ADM0
 OUT = HERE.parents[1] / "runs" / "v4_river_network_plots"
 DATA = OUT / "data"
+SIMPLIFIED_DIR = HERE.parents[1] / "runs" / "v4_river_geojson"
+
+_COUNTRIES: gpd.GeoDataFrame | None = None
+
+
+def _country_for(iso: str) -> gpd.GeoDataFrame | None:
+    """ADM0 polygon for the case's ISO3 from ea_ghcf_simple.geojson."""
+    global _COUNTRIES
+    if _COUNTRIES is None:
+        _COUNTRIES = gpd.read_file(COUNTRIES_PATH).to_crs("EPSG:4326")
+    sel = _COUNTRIES[_COUNTRIES["GID_0"].str.upper() == iso.upper()]
+    return sel if len(sel) else None
 
 API_BASE = "https://tipg-tiler-template.replit.app"
 COLLECTION = "public.ea_river_networks_tdx_v2"
@@ -121,6 +135,13 @@ def load_or_download(iso: str, bbox: tuple) -> dict:
         print(f"  {iso}: cache {cache.name} ({cache.stat().st_size/1e6:.1f} MB)")
         with open(cache) as f:
             return json.load(f)
+    # Fallback: simplified GeoJSON (avoids API re-fetch + OOM on som/ssd)
+    simp = SIMPLIFIED_DIR / f"{iso}_river_network_tdx_simplified.geojson"
+    if simp.exists():
+        print(f"  {iso}: simplified {simp.name} "
+              f"({simp.stat().st_size/1e6:.1f} MB)")
+        with open(simp) as f:
+            return json.load(f)
     print(f"  {iso}: fetching TDX-Hydro bbox="
           f"{','.join(f'{v:.4f}' for v in bbox)} (tiled ≤{TILE_DEG}°)")
     fc = fetch_bbox(bbox)
@@ -175,9 +196,10 @@ def plot_case(iso: str, fc: dict) -> dict:
         ax.add_collection(lc)
 
     geo = _geojson_for(iso)
-    if geo is not None:
-        gpd.read_file(geo).to_crs("EPSG:4326").boundary.plot(
-            ax=ax, color="black", linewidth=0.8, zorder=10)
+    basin = gpd.read_file(geo).to_crs("EPSG:4326") if geo is not None else None
+    if basin is not None:
+        # main map: basin boundary only, no fill
+        basin.boundary.plot(ax=ax, color="black", linewidth=0.8, zorder=10)
 
     handles = [mpatches.Patch(color=color_for[o],
                               label=f"order {o} (lw {lw_for(o)})")
@@ -194,6 +216,27 @@ def plot_case(iso: str, fc: dict) -> dict:
                  f"({len(segs)} segments, orders {omin}–{omax})\n"
                  f"v4 simulation extent; black = _v4_basin outline",
                  fontsize=10, fontweight="bold")
+
+    # inset locator (upper-right): country outline + basin filled, for context
+    country = _country_for(iso)
+    if country is not None and basin is not None:
+        iax = inset_axes(ax, width="28%", height="28%", loc="upper right",
+                         borderpad=0.5)
+        iax.set_facecolor("white")
+        country.boundary.plot(ax=iax, color="black", linewidth=0.7)
+        basin.plot(ax=iax, facecolor="#1f77b4", edgecolor="#0b3d66",
+                   linewidth=0.4, alpha=0.7)
+        cw, cs, ce, cn = country.total_bounds
+        pad = 0.04 * max(ce - cw, cn - cs)
+        iax.set_xlim(cw - pad, ce + pad)
+        iax.set_ylim(cs - pad, cn + pad)
+        iax.set_aspect("equal")
+        iax.set_xticks([]); iax.set_yticks([])
+        for sp in iax.spines.values():
+            sp.set_edgecolor("black"); sp.set_linewidth(0.6)
+        iax.set_title(f"{iso.upper()} — basin in country",
+                      fontsize=7.5, fontweight="bold", pad=1.5)
+
     fig.tight_layout()
     OUT.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUT / f"{iso}_river_network.png", dpi=150,
