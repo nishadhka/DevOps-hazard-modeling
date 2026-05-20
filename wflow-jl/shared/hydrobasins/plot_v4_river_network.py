@@ -35,7 +35,6 @@ import matplotlib.patches as mpatches  # noqa: E402
 import requests  # noqa: E402
 import xarray as xr  # noqa: E402
 from matplotlib.collections import LineCollection  # noqa: E402
-from mpl_toolkits.axes_grid1.inset_locator import inset_axes  # noqa: E402
 
 V4 = Path("/mnt/wflow-secondary/v4_models")
 HERE = Path(__file__).resolve().parent
@@ -186,7 +185,9 @@ def plot_case(iso: str, fc: dict) -> dict:
     span = max(omax - omin, 1)
     color_for = {o: cmap((o - omin) / span) for o in orders}
 
-    fig, ax = plt.subplots(figsize=(9, 9))
+    fig, (ax, iax) = plt.subplots(
+        1, 2, figsize=(12, 9),
+        gridspec_kw={"width_ratios": [3.6, 1], "wspace": 0.10})
     ax.set_facecolor("#f0f0f0")
     # low orders first (thin, behind), trunk rivers last (thick, on top)
     for o in orders:
@@ -198,8 +199,9 @@ def plot_case(iso: str, fc: dict) -> dict:
     geo = _geojson_for(iso)
     basin = gpd.read_file(geo).to_crs("EPSG:4326") if geo is not None else None
     if basin is not None:
-        # main map: basin boundary only, no fill
-        basin.boundary.plot(ax=ax, color="black", linewidth=0.8, zorder=10)
+        # main map: dashed basin boundary, no fill
+        basin.boundary.plot(ax=ax, color="black", linewidth=1.0,
+                            linestyle="--", zorder=10)
 
     handles = [mpatches.Patch(color=color_for[o],
                               label=f"order {o} (lw {lw_for(o)})")
@@ -214,18 +216,17 @@ def plot_case(iso: str, fc: dict) -> dict:
     ax.set_ylabel("Latitude")
     ax.set_title(f"{iso} — TDX-Hydro v2 river network "
                  f"({len(segs)} segments, orders {omin}–{omax})\n"
-                 f"v4 simulation extent; black = _v4_basin outline",
+                 f"v4 simulation extent; dashed black = _v4_basin outline",
                  fontsize=10, fontweight="bold")
 
-    # inset locator (upper-right): country outline + basin filled, for context
+    # right-side panel (separate subplot, not overlay): country outline +
+    # basin filled, anchored to the country extent for geographic context
     country = _country_for(iso)
     if country is not None and basin is not None:
-        iax = inset_axes(ax, width="28%", height="28%", loc="upper right",
-                         borderpad=0.5)
         iax.set_facecolor("white")
-        country.boundary.plot(ax=iax, color="black", linewidth=0.7)
+        country.boundary.plot(ax=iax, color="black", linewidth=0.8)
         basin.plot(ax=iax, facecolor="#1f77b4", edgecolor="#0b3d66",
-                   linewidth=0.4, alpha=0.7)
+                   linewidth=0.5, alpha=0.7)
         cw, cs, ce, cn = country.total_bounds
         pad = 0.04 * max(ce - cw, cn - cs)
         iax.set_xlim(cw - pad, ce + pad)
@@ -233,9 +234,11 @@ def plot_case(iso: str, fc: dict) -> dict:
         iax.set_aspect("equal")
         iax.set_xticks([]); iax.set_yticks([])
         for sp in iax.spines.values():
-            sp.set_edgecolor("black"); sp.set_linewidth(0.6)
+            sp.set_edgecolor("black"); sp.set_linewidth(0.7)
         iax.set_title(f"{iso.upper()} — basin in country",
-                      fontsize=7.5, fontweight="bold", pad=1.5)
+                      fontsize=9.5, fontweight="bold", pad=4)
+    else:
+        iax.axis("off")
 
     fig.tight_layout()
     OUT.mkdir(parents=True, exist_ok=True)
