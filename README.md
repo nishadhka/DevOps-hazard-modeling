@@ -39,15 +39,6 @@ Base URL: `https://crma-frontend-yiyrp6yumq-uc.a.run.app`
 | 10 | Tanzania | Kagera 2021-22 | `2021-9848-TZA` | [`?hazard=drought&stage=risk-knowledge&month=2021-11&event=2021-9848-TZA`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=drought&stage=risk-knowledge&month=2021-11&event=2021-9848-TZA) |
 | 11 | Uganda | Karamoja 2022 | `2022-9436-UGA` | [`?hazard=drought&stage=risk-knowledge&month=2022-07&event=2022-9436-UGA`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=drought&stage=risk-knowledge&month=2022-07&event=2022-9436-UGA) |
 
-### Notes
-
-- **4 stubs** (Flood #03 ERI, Drought #01 BDI, #03 ERI, #06 RWA) cover events
-  EM-DAT does not record. Deep links resolve, narrative explains the data gap.
-- **8 events without images** (Flood #03, #04; Drought #02, #03, #05, #06,
-  #07) render rich text only — `<MediaGallery>` is omitted from those MDX files.
-- All 22 are served from Cloud Run revision `crma-frontend-00013-rqt` via the
-  event-keyed `?event={Dis No}` URL param.
-
 ---
 
 # Hazard Modeling DevOps Setup
