@@ -1,3 +1,55 @@
+# Event Based Storylines: GHACOF73 side event
+
+Deep links into the CRMA dashboard for the 22 IBF case-study events
+(11 flood + 11 drought) presented at the **GHACOF73 side event**. Each link
+opens the Risk Knowledge stage filtered to the event's EM-DAT `Dis No`,
+showing the curated storyline narrative, impact summary, and figures.
+
+Base URL: `https://crma-frontend-yiyrp6yumq-uc.a.run.app`
+
+## Flood Events
+
+| # | Country | Event | Dis No | URL |
+|--:|---|---|---|---|
+| 01 | Burundi | Burundi 2024 | `2024-0232-BDI` | [`?hazard=flood&stage=risk-knowledge&month=2024-04&event=2024-0232-BDI`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=flood&stage=risk-knowledge&month=2024-04&event=2024-0232-BDI) |
+| 02 | Djibouti | Djibouti City 2019 | `2019-0579-DJI` | [`?hazard=flood&stage=risk-knowledge&month=2019-11&event=2019-0579-DJI`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=flood&stage=risk-knowledge&month=2019-11&event=2019-0579-DJI) |
+| 03 | Eritrea | Highlands 2019 (stub — no EM-DAT record) | `2019-IBF03-ERI` | [`?hazard=flood&stage=risk-knowledge&month=2019-08&event=2019-IBF03-ERI`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=flood&stage=risk-knowledge&month=2019-08&event=2019-IBF03-ERI) |
+| 04 | Ethiopia | Addis / Akaki River 2021 | `2021-0343-ETH` | [`?hazard=flood&stage=risk-knowledge&month=2021-05&event=2021-0343-ETH`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=flood&stage=risk-knowledge&month=2021-05&event=2021-0343-ETH) |
+| 05 | Kenya | Nairobi 2024 | `2024-0247-KEN` | [`?hazard=flood&stage=risk-knowledge&month=2024-04&event=2024-0247-KEN`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=flood&stage=risk-knowledge&month=2024-04&event=2024-0247-KEN) |
+| 06 | Rwanda | Rwanda 2023 | `2023-0267-RWA` | [`?hazard=flood&stage=risk-knowledge&month=2023-05&event=2023-0267-RWA`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=flood&stage=risk-knowledge&month=2023-05&event=2023-0267-RWA) |
+| 07 | Sudan | Khartoum 2019 | `2019-0392-SDN` | [`?hazard=flood&stage=risk-knowledge&month=2019-07&event=2019-0392-SDN`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=flood&stage=risk-knowledge&month=2019-07&event=2019-0392-SDN) |
+| 08 | Somalia | Somalia South 2023 | `2023-0741-SOM` | [`?hazard=flood&stage=risk-knowledge&month=2023-09&event=2023-0741-SOM`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=flood&stage=risk-knowledge&month=2023-09&event=2023-0741-SOM) |
+| 09 | South Sudan | Upper Nile 2019 | `2019-0486-SSD` | [`?hazard=flood&stage=risk-knowledge&month=2019-10&event=2019-0486-SSD`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=flood&stage=risk-knowledge&month=2019-10&event=2019-0486-SSD) |
+| 10 | Tanzania | Dar es Salaam 2024 | `2024-0203-TZA` | [`?hazard=flood&stage=risk-knowledge&month=2024-04&event=2024-0203-TZA`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=flood&stage=risk-knowledge&month=2024-04&event=2024-0203-TZA) |
+| 11 | Uganda | Uganda 2019 | `2019-0254-UGA` | [`?hazard=flood&stage=risk-knowledge&month=2019-05&event=2019-0254-UGA`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=flood&stage=risk-knowledge&month=2019-05&event=2019-0254-UGA) |
+
+## Drought Events
+
+| # | Country | Event | Dis No | URL |
+|--:|---|---|---|---|
+| 01 | Burundi | Burundi 2021-22 (stub — no EM-DAT record) | `2021-IBF01-BDI` | [`?hazard=drought&stage=risk-knowledge&month=2021-01&event=2021-IBF01-BDI`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=drought&stage=risk-knowledge&month=2021-01&event=2021-IBF01-BDI) |
+| 02 | Djibouti | Djibouti 2022 | `2022-9370-DJI` | [`?hazard=drought&stage=risk-knowledge&month=2022-06&event=2022-9370-DJI`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=drought&stage=risk-knowledge&month=2022-06&event=2022-9370-DJI) |
+| 03 | Eritrea | Central Highlands 2021-23 (stub — no EM-DAT record) | `2021-IBF03-ERI` | [`?hazard=drought&stage=risk-knowledge&month=2021-01&event=2021-IBF03-ERI`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=drought&stage=risk-knowledge&month=2021-01&event=2021-IBF03-ERI) |
+| 04 | Ethiopia | Blue Nile Headwaters 2021-22 | `2021-9546-ETH` | [`?hazard=drought&stage=risk-knowledge&month=2021-05&event=2021-9546-ETH`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=drought&stage=risk-knowledge&month=2021-05&event=2021-9546-ETH) |
+| 05 | Kenya | Tana / ASAL 2020-23 | `2020-9609-KEN` | [`?hazard=drought&stage=risk-knowledge&month=2020-12&event=2020-9609-KEN`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=drought&stage=risk-knowledge&month=2020-12&event=2020-9609-KEN) |
+| 06 | Rwanda | Akagera 2016-17 (stub — no EM-DAT record) | `2016-IBF06-RWA` | [`?hazard=drought&stage=risk-knowledge&month=2016-01&event=2016-IBF06-RWA`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=drought&stage=risk-knowledge&month=2016-01&event=2016-IBF06-RWA) |
+| 07 | Somalia | South-Central 2020-23 | `2020-9609-SOM` | [`?hazard=drought&stage=risk-knowledge&month=2020-03&event=2020-9609-SOM`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=drought&stage=risk-knowledge&month=2020-03&event=2020-9609-SOM) |
+| 08 | South Sudan | Upper Nile 2021-23 | `2021-9639-SSD` | [`?hazard=drought&stage=risk-knowledge&month=2021-01&event=2021-9639-SSD`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=drought&stage=risk-knowledge&month=2021-01&event=2021-9639-SSD) |
+| 09 | Sudan | Eastern States 2022 | `2022-9788-SDN` | [`?hazard=drought&stage=risk-knowledge&month=2022-01&event=2022-9788-SDN`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=drought&stage=risk-knowledge&month=2022-01&event=2022-9788-SDN) |
+| 10 | Tanzania | Kagera 2021-22 | `2021-9848-TZA` | [`?hazard=drought&stage=risk-knowledge&month=2021-11&event=2021-9848-TZA`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=drought&stage=risk-knowledge&month=2021-11&event=2021-9848-TZA) |
+| 11 | Uganda | Karamoja 2022 | `2022-9436-UGA` | [`?hazard=drought&stage=risk-knowledge&month=2022-07&event=2022-9436-UGA`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=drought&stage=risk-knowledge&month=2022-07&event=2022-9436-UGA) |
+
+### Notes
+
+- **4 stubs** (Flood #03 ERI, Drought #01 BDI, #03 ERI, #06 RWA) cover events
+  EM-DAT does not record. Deep links resolve, narrative explains the data gap.
+- **8 events without images** (Flood #03, #04; Drought #02, #03, #05, #06,
+  #07) render rich text only — `<MediaGallery>` is omitted from those MDX files.
+- All 22 are served from Cloud Run revision `crma-frontend-00013-rqt` via the
+  event-keyed `?event={Dis No}` URL param.
+
+---
+
 # Hazard Modeling DevOps Setup
 
 This repository contains the configuration for running hazard modeling scripts as a containerized application on Kubernetes, managed by ArgoCD, and deployed locally using Minikube.
