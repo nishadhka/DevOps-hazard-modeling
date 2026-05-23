@@ -30,6 +30,8 @@ wflow-jl/runs/*_wrsi/
 wflow-jl/runs/*_v4_wrsi/
 # v4 plot/config staging dirs -> HuggingFace (v4_wrsi_plots, v4_staticmaps_plots, v4_models_config)
 wflow-jl/runs/v4_*/
+# rim2d plot staging dirs -> HuggingFace (rim2d_river_network_plots)
+wflow-jl/runs/rim2d_*/
 
 # Prefect artifacts
 .prefect/
