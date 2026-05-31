@@ -104,7 +104,9 @@ def _open_output(nc: Path) -> xr.Dataset | None:
     """Open output_grid_wrsi.nc, tolerating partial/corrupt files written by a
     concurrent Wflow batch. Returns None if unreadable or has no timesteps."""
     try:
-        ds = xr.open_dataset(nc)
+        # time-chunk so Σ/mean over time stream in blocks — the largest case
+        # (ETH, 7.5 GB / 1428 steps) otherwise OOMs an 8 GB VM on full load.
+        ds = xr.open_dataset(nc, chunks={"time": 64})
     except (OSError, RuntimeError, ValueError):
         return None
     if int(ds.sizes.get("time", 0)) == 0:

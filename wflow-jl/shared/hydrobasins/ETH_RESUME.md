@@ -1,4 +1,19 @@
-# ETH — fresh-session resume guide
+# ETH — fresh-session resume guide  ✅ RESOLVED 2026-05-30 (11/11)
+
+**DONE — ETH no longer needs resuming.** The blocker was the **river**
+network, not the land ldd: `wflow_river` was stale after ldd rebuilds, so
+75 river cells drained to non-river cells → Wflow's `NetworkRiver.flowgraph`
+(searchsortedfirst, no membership check) made spurious edges → cycle. Fixed
+on the existing grid with `eth_river_fix.py --fix` (downstream-closure of the
+river mask, +246 cells, then median-fill river params). Wflow then ran clean
+(13h50m) → valid `eth/output/output_grid_wrsi.nc`. The IHU path (`eth_ihu.py`,
+Step 1 below) is a **dead end** — `pyflwdir.upscale(ihu)` is non-terminating
+on this VM (8h37m CPU, no output). Full write-up in `ETH_BLOCK.md` and memory
+`v4-wflow-wrsi-status.md`. The recipe below is **historical**.
+
+---
+
+# ETH — fresh-session resume guide (historical)
 
 **Use this file as the single entry point** when starting a new Claude
 context to finish the ETH (Ethiopia / Blue Nile Abbay) v4 wflow run.
