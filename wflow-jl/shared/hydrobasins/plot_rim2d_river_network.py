@@ -85,8 +85,16 @@ def fetch_tdx(bbox: tuple) -> dict:
     return {"type": "FeatureCollection", "features": feats}
 
 
-def plot_region(row: dict, fc: dict) -> dict:
-    OUT.mkdir(parents=True, exist_ok=True)
+def plot_region(row: dict, fc: dict, *,
+                overlay_fn=None, out_dir: Path = OUT,
+                out_suffix: str = "rim2d_river",
+                title_extra: str = "") -> dict:
+    """Draw the rim2d base plot (basins + rivers + extent + side panel).
+
+    overlay_fn(ax) is called after the base layers and before save so other
+    scripts (buildings, roads, …) can add their own overlay.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
     iso = str(row["country"]).lower()
     rid = str(row["id"])
     name = row["region"]
@@ -148,7 +156,7 @@ def plot_region(row: dict, fc: dict) -> dict:
               if n_basins else ""))
     ax.set_title(f"{name} ({iso.upper()}, rim2d {rid}) — {len(segs)} river "
                  f"segments, orders {omin}–{omax}\n"
-                 f"dashed black = rim2d extent" + sub,
+                 f"dashed black = rim2d extent" + sub + title_extra,
                  fontsize=10, fontweight="bold")
 
     # ---- side panel: country + rim2d extent filled --------------------------
@@ -170,8 +178,12 @@ def plot_region(row: dict, fc: dict) -> dict:
     else:
         iax.axis("off")
 
+    # caller-supplied overlay (buildings, roads, …) on top of base layers
+    if overlay_fn is not None:
+        overlay_fn(ax)
+
     fig.tight_layout()
-    fig.savefig(OUT / f"{iso}_{rid}_rim2d_river.png", dpi=150,
+    fig.savefig(out_dir / f"{iso}_{rid}_{out_suffix}.png", dpi=150,
                 bbox_inches="tight", facecolor="white")
     plt.close(fig)
     return {"segments": len(segs), "orders_hist":
