@@ -34,6 +34,8 @@ wflow-jl/runs/v4_*/
 wflow-jl/runs/rim2d_*/
 # hydrobasins level-comparison plot dir -> HuggingFace (hydrobasins_levels_ea)
 wflow-jl/runs/hydrobasins_*/
+# eval visualisation dirs -> HuggingFace (e.g. eval_wrsi_events)
+wflow-jl/runs/eval_*/
 # transient batch logs under runs/
 wflow-jl/runs/_*.log
 
