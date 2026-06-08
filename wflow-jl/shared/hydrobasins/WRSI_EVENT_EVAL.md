@@ -27,6 +27,7 @@ inter-annual change. All 11 grids are valid as of 2026-06-06 (SOM/SSD re-run).
 | SSD | Upper Nile 2021-23 | 2021-23 | | | | 36◀ | 29◀ | 25◀ | 30 |
 | SDN | Eastern States 2022 | 2021-23 | | | | 43 | 32◀ | 28 | 34 |
 | TZA | Kagera 2021-22 | 2022-23 | | | | — | 40◀ | 37 | 39 |
+| TZA·kagera | Kagera 2021-22 (corrected) | 2020-23 | | | 75 | 56◀ | 53◀ | 61 | 61 |
 | UGA | Karamoja 2022 | 2021-22 | | | | 68 | 63◀ | | 65 |
 
 (WRSI bands, FAO: <50 crop-failure, 50–79 water-stress, ≥80 no/min-stress.)
@@ -54,8 +55,18 @@ inter-annual change. All 11 grids are valid as of 2026-06-06 (SOM/SSD re-run).
   **UGA** 68→63 (signal diluted — basin = Lake Kyoga, wetter than Karamoja proper).
 
 **Poor:**
-- **TZA** — modeled basin is **Pangani (NE)** but the event is **Kagera (NW)**:
-  wrong basin; run window 2022-23 also misses 2021 of the 2021-22 event. Flat 40→37.
+- **TZA** (original) — modeled basin is **Pangani (NE)** but the event is
+  **Kagera (NW)**: wrong basin; run window 2022-23 also misses 2021 of the
+  2021-22 event. Flat 40→37.
+
+**Corrected — TZA·kagera (2026-06-08):** rebuilt on the **Kagera NW basin**
+(lev-6, seed 31.30,-1.60, ~6,750 km², NW Tanzania) over **2020-23**. WRSI
+**2020=75 → 2021=56 → 2022=53 → 2023=61** (ΣAET 1082→839→793→907): a clear
+~20-pt dip in the event years below the 2020 baseline, with 2023 recovery —
+now **representative** of the Kagera 2021-22 drought (vs the flat, wrong-basin
+Pangani run). Built alongside Pangani as case `tza_kagera`; magnitude is
+moderate because Kagera is a semi-humid highland basin. (SSD's basin mismatch
+— Bahr el Ghazal vs Upper Nile — remains the analogous open correction.)
 
 ## Caveats
 1. Annualized water-balance WRSI (Kc=1), **not** FAO season-based WRSI —
