@@ -1,8 +1,42 @@
-# ETH v4 — wflow ldd block (1 of 11 unresolved)
+# ETH v4 — wflow ldd block (RESOLVED 2026-05-30 → 11/11)
 
-**Status:** 10/11 v4 WRSI grids complete; **ETH (Blue Nile / Abbay) is the
-sole failure.** All outputs: `/mnt/wflow-secondary/v4_models/<iso>/output/
-output_grid_wrsi.nc`.
+**Status: RESOLVED.** 11/11 v4 WRSI grids complete. ETH ran clean (13h50m,
+1428 daily steps) → valid `eth/output/output_grid_wrsi.nc` (7.5 GB, aet+pet).
+
+## ✅ Resolution — the cycle was in the RIVER network, not the land ldd
+
+The blocker was misdiagnosed for the entire history below. The Wflow error
+fires in `Wflow.NetworkRiver` → `flowgraph` (src/routing/routing_process.jl),
+which builds a graph over **`wflow_river` cells only**. `flowgraph` resolves
+each cell's downstream node with `searchsortedfirst(indices, to_index)` and
+does **not** check membership — so a river cell whose ldd points IN-GRID to a
+**non-river** cell is wired to an arbitrary nearby river node → spurious edge →
+cycle. (Off-grid ldd pointers are harmless: `add_edge!` to an out-of-range
+vertex is silently dropped, an effective outlet — which is why the full LAND
+ldd, verified acyclic, always passed.)
+
+Root cause: every fix below rebuilt `wflow_ldd` but left the **stale
+`wflow_river`** mask, so river cells no longer drained to river cells. ETH had
+exactly **75** river cells whose in-grid downstream was non-river.
+
+Fix (`shared/hydrobasins/eth_river_fix.py --fix`): take the existing river
+mask and add its **downstream closure** (follow ldd to each outlet) — +246
+cells — so every river cell is a pit or drains to a river cell (violations →
+0); then median-fill river params on the added cells. **No regrid, no IHU
+upscale, no forcing rebuild.** Backup: `eth/staticmaps.nc.preriverfix`.
+Diagnostic helper `eth_cycle_fix.py` confirmed the land ldd had 0 cycles.
+
+The IHU rework (`eth_ihu.py`) was a dead end — `pyflwdir.upscale(ihu)` is
+CPU-bound and non-terminating on this 2-core VM (8h37m wall = 8h37m CPU, zero
+output, not OOM). Abandoned in favour of the river-mask fix.
+
+---
+
+## Original analysis (historical — kept for context)
+
+**Status (at the time):** 10/11 v4 WRSI grids complete; **ETH (Blue Nile /
+Abbay) is the sole failure.** All outputs: `/mnt/wflow-secondary/v4_models/
+<iso>/output/output_grid_wrsi.nc`.
 
 ## Symptom
 

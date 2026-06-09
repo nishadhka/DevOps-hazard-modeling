@@ -30,6 +30,14 @@ wflow-jl/runs/*_wrsi/
 wflow-jl/runs/*_v4_wrsi/
 # v4 plot/config staging dirs -> HuggingFace (v4_wrsi_plots, v4_staticmaps_plots, v4_models_config)
 wflow-jl/runs/v4_*/
+# rim2d plot staging dirs -> HuggingFace (rim2d_river_network_plots)
+wflow-jl/runs/rim2d_*/
+# hydrobasins level-comparison plot dir -> HuggingFace (hydrobasins_levels_ea)
+wflow-jl/runs/hydrobasins_*/
+# eval visualisation dirs -> HuggingFace (e.g. eval_wrsi_events)
+wflow-jl/runs/eval_*/
+# transient batch logs under runs/
+wflow-jl/runs/_*.log
 
 # Prefect artifacts
 .prefect/

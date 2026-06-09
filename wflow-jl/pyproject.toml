@@ -13,6 +13,7 @@ dependencies = [
     "matplotlib>=3.10.9",
     "netcdf4>=1.7.4",
     "numpy>=2.4.4",
+    "overturemaps>=1.0.0",
     "pandas>=3.0.3",
     "pyflwdir>=0.5.11",
     "pyogrio>=0.12.1",

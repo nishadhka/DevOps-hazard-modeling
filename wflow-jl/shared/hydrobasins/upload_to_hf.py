@@ -27,7 +27,7 @@ from dotenv import find_dotenv, load_dotenv
 from huggingface_hub import HfApi
 from huggingface_hub.errors import HfHubHTTPError
 
-HF_REPO = "E4DRR/wflow.jl-simulations"
+DEFAULT_HF_REPO = "E4DRR/wflow.jl-simulations"
 HF_REPO_TYPE = "dataset"
 
 HERE = Path(__file__).resolve().parent
@@ -51,7 +51,7 @@ def _summarise(folder: Path) -> tuple[int, int]:
     return len(files), sum(p.stat().st_size for p in files)
 
 
-def _upload_folder_with_retry(api: HfApi, *, folder: Path, dest: str,
+def _upload_folder_with_retry(api: HfApi, *, repo: str, folder: Path, dest: str,
                               commit_message: str, max_attempts: int = 5,
                               base_backoff_sec: int = 300) -> None:
     """upload_folder with exponential back-off on 429 (rate-limited)."""
@@ -60,7 +60,7 @@ def _upload_folder_with_retry(api: HfApi, *, folder: Path, dest: str,
             api.upload_folder(
                 folder_path=str(folder),
                 path_in_repo=dest,
-                repo_id=HF_REPO,
+                repo_id=repo,
                 repo_type=HF_REPO_TYPE,
                 commit_message=commit_message,
             )
@@ -81,6 +81,10 @@ def main() -> None:
                    help=f"Local folder to upload (default: {DEFAULT_LOCAL})")
     p.add_argument("--dest", default=DEFAULT_DEST,
                    help=f"Path inside the HF dataset (default: {DEFAULT_DEST})")
+    p.add_argument("--repo", default=DEFAULT_HF_REPO,
+                   help=f"HF dataset repo (default: {DEFAULT_HF_REPO})")
+    p.add_argument("--create-repo", action="store_true",
+                   help="Create the dataset repo if it does not exist")
     p.add_argument("--message", default=None,
                    help="Commit message on the dataset (default auto-generated)")
     p.add_argument("--dry-run", action="store_true",
@@ -94,7 +98,7 @@ def main() -> None:
     n_files, total_bytes = _summarise(folder)
     print(f"Source folder : {folder}")
     print(f"Files         : {n_files} ({total_bytes / 1e6:,.2f} MB)")
-    print(f"HF target     : {HF_REPO_TYPE} {HF_REPO} → {args.dest}")
+    print(f"HF target     : {HF_REPO_TYPE} {args.repo} → {args.dest}")
 
     if args.dry_run:
         print("\nDRY RUN — file list:")
@@ -107,15 +111,20 @@ def main() -> None:
     token = _load_token()
     api = HfApi(token=token)
 
+    if args.create_repo:
+        api.create_repo(repo_id=args.repo, repo_type=HF_REPO_TYPE,
+                        exist_ok=True, private=False)
+
     commit_message = args.message or (
-        f"hydrobasins: upload {n_files} files ({total_bytes / 1e6:,.1f} MB) → {args.dest}"
+        f"upload {n_files} files ({total_bytes / 1e6:,.1f} MB) → {args.dest}"
     )
     print(f"Commit message: {commit_message}\n")
 
     _upload_folder_with_retry(
-        api, folder=folder, dest=args.dest, commit_message=commit_message,
+        api, repo=args.repo, folder=folder, dest=args.dest,
+        commit_message=commit_message,
     )
-    print(f"\n✓ Uploaded to https://huggingface.co/datasets/{HF_REPO}/tree/main/{args.dest}")
+    print(f"\n✓ Uploaded to https://huggingface.co/datasets/{args.repo}/tree/main/{args.dest}")
 
 
 if __name__ == "__main__":
