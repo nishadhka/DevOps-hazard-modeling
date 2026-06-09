@@ -43,7 +43,10 @@ import numpy as np  # noqa: E402
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
 OUT = HERE.parents[1] / "runs" / "hydrobasins_levels"
-NE_COUNTRIES = DATA / "ne_50m_admin_0_countries.shp"
+# ICPAC GHA 11-country ADM0 (BDI/DJI/ERI/ETH/KEN/RWA/SDN/SOM/SSD/TZA/UGA);
+# replaces the Natural Earth 50 m admin_0 used previously so the country
+# overlay highlights only the operational footprint, not neighbour states.
+COUNTRIES_GEOJSON = HERE / "ea_ghcf_simple.geojson"
 
 DEFAULT_BBOX = (20.0, -15.0, 53.0, 25.0)        # W, S, E, N — East Africa
 DEFAULT_LEVELS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
@@ -125,7 +128,8 @@ def main() -> None:
         print(f"    {label:<26s}  {area:>9,.0f} km²")
     print()
 
-    countries = gpd.read_file(NE_COUNTRIES, bbox=bbox).to_crs("EPSG:4326")
+    countries = gpd.read_file(COUNTRIES_GEOJSON,
+                              bbox=bbox).to_crs("EPSG:4326")
     print(f"  countries in bbox: {len(countries)}")
 
     cached: dict[int, gpd.GeoDataFrame] = {}
