@@ -25,6 +25,7 @@ inter-annual change. All 11 grids are valid as of 2026-06-06 (SOM/SSD re-run).
 | RWA | Akagera 2016-17 | 2016-17 | 70◀ | 68◀ | | | | | 69 |
 | SOM | South-Central 2020-23 | 2020-23 | | | 36◀ | 14◀ | **12◀** | 29◀ | 22 |
 | SSD | Upper Nile 2021-23 | 2021-23 | | | | 36◀ | 29◀ | 25◀ | 30 |
+| SSD·upper_nile | Upper Nile 2021-23 (corrected) | 2020-23 | | | 42 | 28◀ | 28◀ | 21◀ | 30 |
 | SDN | Eastern States 2022 | 2021-23 | | | | 43 | 32◀ | 28 | 34 |
 | TZA | Kagera 2021-22 | 2022-23 | | | | — | 40◀ | 37 | 39 |
 | TZA·kagera | Kagera 2021-22 (corrected) | 2020-23 | | | 75 | 56◀ | 53◀ | 61 | 61 |
@@ -46,9 +47,9 @@ inter-annual change. All 11 grids are valid as of 2026-06-06 (SOM/SSD re-run).
 **Moderate:**
 - **SDN**: 2022 dip 43→32, but dryness persists into 2023; basin (Sennar/Lower
   Blue Nile) is adjacent to — not the same as — the "Eastern States" event.
-- **SSD**: temporally a deepening drought (36→29→25, ΣAET 645→454→340), BUT
-  **spatial mismatch** — modeled basin is **Bahr el Ghazal (NW)** while the
-  event is **Upper Nile (NE)**, a different region of South Sudan.
+- **SSD** (original): temporally a deepening drought (36→29→25, ΣAET
+  645→454→340), BUT **spatial mismatch** — modeled basin is **Bahr el Ghazal
+  (NW)** while the event is **Upper Nile (NE)**. → **corrected below.**
 
 **Weak** — humid Great-Lakes basins, WRSI stays 60-74, only mild dips:
 - **BDI** 74→70, **RWA** 70→68 (window correctly event-tailored to 2016-17),
@@ -65,8 +66,15 @@ inter-annual change. All 11 grids are valid as of 2026-06-06 (SOM/SSD re-run).
 ~20-pt dip in the event years below the 2020 baseline, with 2023 recovery —
 now **representative** of the Kagera 2021-22 drought (vs the flat, wrong-basin
 Pangani run). Built alongside Pangani as case `tza_kagera`; magnitude is
-moderate because Kagera is a semi-humid highland basin. (SSD's basin mismatch
-— Bahr el Ghazal vs Upper Nile — remains the analogous open correction.)
+moderate because Kagera is a semi-humid highland basin.
+
+**Corrected — SSD·upper_nile (2026-06-09):** rebuilt on the **Upper Nile /
+Sobat basin** (lev-5 unit, seed 33.00,9.30, ~42,000 km², E Upper Nile state)
+over **2020-23**. WRSI **2020=42 → 2021=28 → 2022=28 → 2023=21** (ΣAET
+991→691→678→531): a clear deepening multi-year drought below the 2020 baseline
+— now **representative** of the Upper Nile 2021-23 event AND in the right
+region (Sobat/NE) vs the original Bahr el Ghazal (NW). Built alongside as case
+`ssd_upper_nile` (hot semi-arid lowland: PET ~2500 mm/yr, T 28°C).
 
 ## Caveats
 1. Annualized water-balance WRSI (Kc=1), **not** FAO season-based WRSI —
