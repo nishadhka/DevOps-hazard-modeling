@@ -30,6 +30,9 @@ inter-annual change. All 11 grids are valid as of 2026-06-06 (SOM/SSD re-run).
 | TZA | Kagera 2021-22 | 2022-23 | | | | — | 40◀ | 37 | 39 |
 | TZA·kagera | Kagera 2021-22 (corrected) | 2020-23 | | | 75 | 56◀ | 53◀ | 61 | 61 |
 | UGA | Karamoja 2022 | 2021-22 | | | | 68 | 63◀ | | 65 |
+| UGA·karamoja | Karamoja 2022 (corrected) | 2020-23 | | | 79 | 30 | 33◀ | 29 | 41 |
+| BDI·baseline | Burundi 2021-22 (+baseline) | 2020-23 | | | 74 | 72◀ | 71◀ | 76 | 73 |
+| RWA·baseline | Akagera 2016-17 (+baseline) | 2014-17 | 67◀ | 67◀ | | | | | 70 |
 
 (WRSI bands, FAO: <50 crop-failure, 50–79 water-stress, ≥80 no/min-stress.)
 
@@ -75,6 +78,33 @@ over **2020-23**. WRSI **2020=42 → 2021=28 → 2022=28 → 2023=21** (ΣAET
 — now **representative** of the Upper Nile 2021-23 event AND in the right
 region (Sobat/NE) vs the original Bahr el Ghazal (NW). Built alongside as case
 `ssd_upper_nile` (hot semi-arid lowland: PET ~2500 mm/yr, T 28°C).
+
+**Corrected — UGA·karamoja (2026-06-10):** the original UGA used a lev-5 unit
+that lumps semi-arid Karamoja with the wetter Lake Kyoga drainage, diluting the
+signal (68→63). Rebuilt on **Karamoja proper** (lev-6 unit, seed 34.65,2.53,
+~6.7k km², NE Uganda) over 2020-23: WRSI **79 → 30 → 33 → 29** (ΣAET
+1567→685) — a dramatic collapse from the 2020 baseline into the 2021-23
+Karamoja food-crisis years. **Now strongly representative** (the single most
+improved correction). Case `uga_karamoja`.
+
+**Baseline re-runs — BDI / RWA (2026-06-10):** to test whether the humid
+Great-Lakes weakness is real or a missing-baseline artifact, re-ran both with a
+pre-event baseline year. **BDI·baseline** (Ruvubu, 2020-23): 74→72→71→76 —
+**flat**, confirming no water-balance drought in 2021-22 (ERA5 has no deficit
+there); genuinely weak, not an artifact. **RWA·baseline** (Lower Akagera,
+2014-17): 76→69→67→67 — a **mild ~8-pt** dip below the 2014 baseline (the
+2015-16 El Niño drought, muted in this humid basin). Both confirm the humid-GL
+signals are real magnitude limits.
+
+**Corrected — SDN·eastern (2026-06-10):** rebuilt on the **Kassala/Gash basin**
+(lev-5 unit, seed 36.40,15.45, ~73k km², E Sudan toward the Red Sea) over
+2020-23: WRSI **25 → 9 → 9 → 7** (ΣAET 463→128) — severe sustained water
+stress in 2021-23 vs the 2020 baseline, in the correct Eastern-States region
+(vs the original Sennar/Lower Blue Nile). Hyper-arid (P ~0.5 mm/d) so WRSI is
+always very low. Case `sdn_eastern`. (NOTE: needed an ldd 255→pit fix — a
+unit-basin in a large bbox leaves nodata-ldd edge cells that Wflow's
+`NetworkLand` includes because `repair_v4_staticmaps` strips `_FillValue`;
+build_v4_correction.py / phase3 should set ldd 255→5.)
 
 ## Caveats
 1. Annualized water-balance WRSI (Kc=1), **not** FAO season-based WRSI —
