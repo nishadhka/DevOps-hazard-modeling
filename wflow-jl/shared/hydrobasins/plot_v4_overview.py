@@ -50,6 +50,7 @@ def main():
     admin = gpd.read_file(ensure_natural_earth(), engine="pyogrio")
     fig, ax = plt.subplots(figsize=(13, 12))
     admin.boundary.plot(ax=ax, color="#999", linewidth=0.4)
+    plotted = []                       # (iso, geodf, colour) for the inset
     for (iso, stem, lab), c in zip(CASES, colors):
         g = gpd.read_file(GEO / f"{stem}.geojson").to_crs(4326).dissolve()
         g.plot(ax=ax, color=c, alpha=0.6, edgecolor="black", linewidth=0.5,
@@ -57,6 +58,7 @@ def main():
         cen = g.geometry.iloc[0].representative_point()
         ax.annotate(iso, (cen.x, cen.y), ha="center", va="center",
                     fontsize=8, fontweight="bold")
+        plotted.append((iso, g, c))
     ax.set_xlim(20, 52)
     ax.set_ylim(-13, 23)
     ax.set_aspect("equal")
@@ -66,6 +68,26 @@ def main():
                  "events\n(* = basin corrected to match the event region)")
     ax.legend(loc="lower left", fontsize=8, frameon=True, ncol=2,
               title="country · basin")
+
+    # Zoom inset: RWA/TZA/BDI sit in the same Kagera / Lake-Victoria system and
+    # overlap at the main scale — break them out so all three are legible.
+    cl = (28.9, 32.1, -4.2, -0.9)      # lon0, lon1, lat0, lat1
+    axins = ax.inset_axes([0.02, 0.63, 0.30, 0.30])
+    admin.boundary.plot(ax=axins, color="#999", linewidth=0.5)
+    for iso, g, c in plotted:
+        g.plot(ax=axins, color=c, alpha=0.65, edgecolor="black", linewidth=0.6)
+        cen = g.geometry.iloc[0].representative_point()
+        if cl[0] <= cen.x <= cl[1] and cl[2] <= cen.y <= cl[3]:
+            axins.annotate(iso, (cen.x, cen.y), ha="center", va="center",
+                           fontsize=11, fontweight="bold")
+    axins.set_xlim(cl[0], cl[1])
+    axins.set_ylim(cl[2], cl[3])
+    axins.set_aspect("equal")
+    axins.set_xticks([])
+    axins.set_yticks([])
+    axins.set_title("Kagera / L. Victoria cluster (RWA·TZA·BDI)", fontsize=8)
+    ax.indicate_inset_zoom(axins, edgecolor="black", linewidth=1.0, alpha=0.8)
+
     fig.tight_layout()
     OUT.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUT, dpi=160, bbox_inches="tight")
