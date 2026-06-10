@@ -13,28 +13,33 @@ The meaningful drought signal is the **year-over-year drop within a basin**
 mostly reflects **aridity**, not severity — so each case is judged on its own
 inter-annual change. All 11 grids are valid as of 2026-06-06 (SOM/SSD re-run).
 
-## Per-year basin-mean WRSI (event years marked ◀)
+## Final overview — corrected case per country (regenerated 2026-06-10)
 
-| ISO | Event (period) | Run window | 2016 | 2017 | 2020 | 2021 | 2022 | 2023 | Full |
-|-----|----------------|-----------|------|------|------|------|------|------|------|
-| BDI | Burundi 2021-22 | 2021-22 | | | | 74◀ | 70◀ | | 72 |
-| DJI | Djibouti 2022 | 2021-23 | | | | 26 | **9◀** | 10 | 15 |
-| ERI | Central Highlands 2021-23 | 2021-23 | | | | 23◀ | 14◀ | 7◀ | 14 |
-| ETH | Blue Nile HW 2021-22 | 2020-23 | | | 51 | 39◀ | 36◀ | 39 | 41 |
-| KEN | Tana/ASAL 2020-23 | 2020-23 | | | 47◀ | 22◀ | 18◀ | 23◀ | 27 |
-| RWA | Akagera 2016-17 | 2016-17 | 70◀ | 68◀ | | | | | 69 |
-| SOM | South-Central 2020-23 | 2020-23 | | | 36◀ | 14◀ | **12◀** | 29◀ | 22 |
-| SSD | Upper Nile 2021-23 | 2021-23 | | | | 36◀ | 29◀ | 25◀ | 30 |
-| SSD·upper_nile | Upper Nile 2021-23 (corrected) | 2020-23 | | | 42 | 28◀ | 28◀ | 21◀ | 30 |
-| SDN | Eastern States 2022 | 2021-23 | | | | 43 | 32◀ | 28 | 34 |
-| TZA | Kagera 2021-22 | 2022-23 | | | | — | 40◀ | 37 | 39 |
-| TZA·kagera | Kagera 2021-22 (corrected) | 2020-23 | | | 75 | 56◀ | 53◀ | 61 | 61 |
-| UGA | Karamoja 2022 | 2021-22 | | | | 68 | 63◀ | | 65 |
-| UGA·karamoja | Karamoja 2022 (corrected) | 2020-23 | | | 79 | 30 | 33◀ | 29 | 41 |
-| BDI·baseline | Burundi 2021-22 (+baseline) | 2020-23 | | | 74 | 72◀ | 71◀ | 76 | 73 |
-| RWA·baseline | Akagera 2016-17 (+baseline) | 2014-17 | 67◀ | 67◀ | | | | | 70 |
+Final overview — **one row per country, using the corrected basin/window where
+one was built** (✎). Event years in **bold**; `→` is the year-to-year
+trajectory; ✎ = basin or window corrected this session (originals superseded).
 
-(WRSI bands, FAO: <50 crop-failure, 50–79 water-stress, ≥80 no/min-stress.)
+| # | Country | Event (period) | Basin · case (window) | WRSI trajectory (event yrs bold) | Full | Verdict |
+|--|--|--|--|--|--|--|
+| 01 | BDI | Burundi 2021-22 | Ruvubu · `bdi_baseline` (2020-23) | 74→**72**→**71**→76 | 73 | weak (flat — no deficit) |
+| 02 | DJI | Djibouti 2022 | Afar endorheic · `dji` (2021-23) | 26→**9**→10 | 15 | **strong** |
+| 03 | ERI | Highlands 2021-23 | Anseba · `eri` (2021-23) | **23→14→7** | 14 | **strong** |
+| 04 | ETH | Blue Nile 2021-22 | Abbay · `eth` (2020-23) | 51→**39→36**→39 | 41 | good |
+| 05 | KEN | Tana/ASAL 2020-23 | Tana · `ken` (2020-23) | **47→22→18→23** | 27 | **strong** |
+| 06 | RWA | Akagera 2016-17 | L. Akagera · `rwa_baseline` (2014-17) | 76→69→**67→67** | 70 | weak (mild) |
+| 07 | SOM | South-Central 2020-23 | Juba-Shabelle · `som` (2020-23) | **36→14→12→29** | 22 | **strong** |
+| 08 | SSD | Upper Nile 2021-23 | Sobat/Nasir · `ssd_upper_nile` (2020-23) ✎ | 42→**28→28→21** | 30 | representative ✎ |
+| 09 | SDN | Eastern States 2022 | Kassala/Gash · `sdn_eastern` (2020-23) ✎ | 25→9→**9**→7 | 12 | representative ✎ |
+| 10 | TZA | Kagera 2021-22 | Kagera NW · `tza_kagera` (2020-23) ✎ | 75→**56→53**→61 | 61 | representative ✎ |
+| 11 | UGA | Karamoja 2022 | Karamoja · `uga_karamoja` (2020-23) ✎ | 79→30→**33**→29 | 41 | **strong** ✎ |
+
+✎ **Corrected this session** (original basin → corrected): SSD Bahr el Ghazal→Upper Nile;
+SDN Sennar/Lower-Blue-Nile→Kassala/Gash; TZA Pangani→Kagera NW; UGA Lake Kyoga→Karamoja proper.
+Originals remain on HF/disk (e.g. `ssd`, `sdn`, `tza`, `uga`) but are superseded for event matching.
+BDI/RWA basins were already correct — `*_baseline` adds a pre-event baseline year.
+
+(WRSI bands, FAO: <50 crop-failure, 50–79 water-stress, ≥80 no/min-stress.
+Absolute WRSI reflects basin aridity; the **inter-annual drop** is the drought signal.)
 
 ## Verdicts
 
