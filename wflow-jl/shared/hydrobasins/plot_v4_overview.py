@@ -23,9 +23,12 @@ import geopandas as gpd              # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-from shared.hydrobasins.download import ensure_natural_earth  # noqa: E402
 
-GEO = Path(__file__).resolve().parent / "outputs_v4"
+HERE = Path(__file__).resolve().parent
+GEO = HERE / "outputs_v4"
+# Admin base for ALL overview/cartopy plots: the simplified GHACOF 11-country
+# boundary (GID_0 ISO codes) — replaces the Natural Earth boundary.
+BOUNDARY = HERE / "ea_ghcf_simple.geojson"
 OUT = REPO / "runs" / "v4_wrsi_plots" / "overview_v4_corrected.png"
 
 # (ISO, basin-geojson stem, legend label). `*` = corrected basin.
@@ -47,7 +50,7 @@ CASES = [
 
 def main():
     colors = cm.tab20(np.linspace(0, 1, len(CASES)))
-    admin = gpd.read_file(ensure_natural_earth(), engine="pyogrio")
+    admin = gpd.read_file(BOUNDARY, engine="pyogrio")
     fig, ax = plt.subplots(figsize=(13, 12))
     admin.boundary.plot(ax=ax, color="#999", linewidth=0.4)
     plotted = []                       # (iso, geodf, colour) for the inset
