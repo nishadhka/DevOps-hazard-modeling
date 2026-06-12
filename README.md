@@ -39,6 +39,40 @@ Base URL: `https://crma-frontend-yiyrp6yumq-uc.a.run.app`
 | 10 | Tanzania | Kagera 2021-22 | `2021-9848-TZA` | [`?hazard=drought&stage=risk-knowledge&month=2021-11&event=2021-9848-TZA`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=drought&stage=risk-knowledge&month=2021-11&event=2021-9848-TZA) |
 | 11 | Uganda | Karamoja 2022 | `2022-9436-UGA` | [`?hazard=drought&stage=risk-knowledge&month=2022-07&event=2022-9436-UGA`](https://crma-frontend-yiyrp6yumq-uc.a.run.app/?hazard=drought&stage=risk-knowledge&month=2022-07&event=2022-9436-UGA) |
 
+### WRSI wflow.jl simulations (drought storylines)
+
+Each drought storyline above has a **wflow.jl SBM → WRSI** simulation
+(WRSI = `100·ΣAET/ΣPET`, ERA5-forced). The modeled basin is chosen to match the
+event region; **four were corrected** (✎) so the basin matches the documented
+region. The drought signal is the **year-over-year WRSI drop** within the basin.
+
+**Overview map** of the 11 final/corrected basins:
+[overview_v4_corrected.png](https://huggingface.co/datasets/E4DRR/wflow.jl-simulations/blob/main/v4_wrsi_plots/overview_v4_corrected.png)
+
+| # | Country | Modeled basin | Per-year WRSI (event yrs **bold**) | Signal |
+|--:|--|--|--|--|
+| 01 | BDI | Ruvubu | 74→**72→71**→76 | weak (humid) |
+| 02 | DJI | Afar endorheic | 26→**9**→10 | strong |
+| 03 | ERI | Anseba | **23→14→7** | strong |
+| 04 | ETH | Blue Nile / Abbay | 51→**39→36**→39 | good |
+| 05 | KEN | Tana | **47→22→18→23** | strong |
+| 06 | RWA | Lower Akagera | 76→69→**67→67** | weak (humid) |
+| 07 | SOM | Juba-Shabelle | **36→14→12→29** | strong |
+| 08 | SSD | Sobat / Upper Nile ✎ | 42→**28→28→21** | representative |
+| 09 | SDN | Kassala / Gash ✎ | 25→9→**9**→7 | representative |
+| 10 | TZA | Kagera NW ✎ | 75→**56→53**→61 | representative |
+| 11 | UGA | Karamoja ✎ | 79→30→**33**→29 | strong |
+
+✎ basin corrected to match the event region (was: SSD Bahr el Ghazal, SDN
+Sennar, TZA Pangani, UGA Lake Kyoga). Larger-basin variants of UGA/TZA show the
+signal **dilutes** as extent grows — focused event-region basins resolve drought
+that larger hydrological basins average away.
+
+- Results table, verdicts, caveats: [`wflow-jl/shared/hydrobasins/WRSI_EVENT_EVAL.md`](wflow-jl/shared/hydrobasins/WRSI_EVENT_EVAL.md)
+- Correction methodology + technical fixes: [`WRSI_CORRECTION_STEPS.md`](wflow-jl/shared/hydrobasins/WRSI_CORRECTION_STEPS.md)
+- Data on HF `E4DRR/wflow.jl-simulations`: `v4_wrsi_plots/` (plots+overview),
+  `wflow_runs/<case>_wrsi/` (WRSI grids), `v4_models/<case>/` (model inputs).
+
 ---
 
 # Hazard Modeling DevOps Setup
