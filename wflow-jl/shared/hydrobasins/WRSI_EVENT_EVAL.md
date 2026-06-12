@@ -115,6 +115,20 @@ unit-basin in a large bbox leaves nodata-ldd edge cells that Wflow's
 `NetworkLand` includes because `repair_v4_staticmaps` strips `_FillValue`;
 build_v4_correction.py / phase3 should set ldd 255→5.)
 
+**Basin-scale sensitivity — larger-region variants (2026-06-12).** Built lev-5
+"larger region" versions of the two focused humid corrections to test how basin
+extent affects the signal. Both **dilute** the drought (the focused event-region
+basin is more representative):
+
+| Country | Focused basin | Larger basin (lev-5) | Conclusion |
+|--|--|--|--|
+| UGA | Karamoja ~6.7k: 79→30→33→29 (full 41) | NE Uganda ~43k: 89→63→63→63 (full 69) | larger pulls in wet L. Kyoga (P 4.1 vs 2.4) → drop ~26 vs ~50; ~reproduces the original diluted UGA |
+| TZA | Kagera ~6.7k: 75→56→53→61 (full 61) | NW Tanzania ~64k: 79→67→67→71 (full 71) | larger spreads into the wetter L. Victoria basin (P 4.0 vs 2.6) → drop ~12 vs ~21 |
+
+Cases `uga_karamoja_large` / `tza_kagera_large` (HF: `v4_wrsi_plots/<case>_*`,
+`wflow_runs/<case>_wrsi/`). Take-away: **smaller, event-region-focused basins
+resolve drought signals that larger hydrological basins average away.**
+
 ## Caveats
 1. Annualized water-balance WRSI (Kc=1), **not** FAO season-based WRSI —
    relative inter-annual change is the reliable signal; seasonal (OND/MAM) WRSI

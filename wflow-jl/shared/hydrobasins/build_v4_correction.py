@@ -49,6 +49,15 @@ CONFIGS = {
     "rwa_baseline": dict(stem="06b_rwanda_akagera_baseline_v4", basin="Lower Akagera",
                          seed=(30.79, -2.38), level=6, mode="basin", target=25000,
                          fstart="2014-01-01", fend="2017-12-31"),
+    # larger-region variants (lev-5 units) of the corrected UGA/TZA basins
+    "uga_karamoja_large": dict(stem="11c_uganda_karamoja_large_v4",
+                               basin="Karamoja + NE Uganda (large)",
+                               seed=(34.65, 2.53), level=5, mode="unit",
+                               fstart="2020-01-01", fend="2023-12-31"),
+    "tza_kagera_large": dict(stem="10c_tanzania_kagera_large_v4",
+                             basin="Kagera + NW Tanzania (large)",
+                             seed=(31.30, -1.60), level=5, mode="unit",
+                             fstart="2020-01-01", fend="2023-12-31"),
 }
 
 
