@@ -47,6 +47,13 @@ CASES = [
     ("UGA", "11b_uganda_karamoja_v4_basin", "UGA Karamoja *"),
 ]
 
+# Larger-region variants (lev-5) of the focused UGA/TZA basins — drawn as dashed
+# outlines to show extent without hiding the focused basins they contain.
+LARGER = [
+    ("UGA-large", "11c_uganda_karamoja_large_v4_basin", "UGA large ~43k km²", "#1f77b4"),
+    ("TZA-large", "10c_tanzania_kagera_large_v4_basin", "TZA large ~64k km²", "#d62728"),
+]
+
 
 def main():
     colors = cm.tab20(np.linspace(0, 1, len(CASES)))
@@ -62,13 +69,20 @@ def main():
         ax.annotate(iso, (cen.x, cen.y), ha="center", va="center",
                     fontsize=8, fontweight="bold")
         plotted.append((iso, g, c))
+    larger = []                        # larger-region extent variants (dashed)
+    for iso, stem, lab, c in LARGER:
+        g = gpd.read_file(GEO / f"{stem}.geojson").to_crs(4326).dissolve()
+        g.boundary.plot(ax=ax, color=c, linewidth=1.7, linestyle="--",
+                        label=lab)
+        larger.append((iso, g, c))
     ax.set_xlim(20, 52)
     ax.set_ylim(-13, 23)
     ax.set_aspect("equal")
     ax.set_xlabel("lon")
     ax.set_ylabel("lat")
     ax.set_title("v4 WRSI — final/corrected basins for the 11 ICPAC drought "
-                 "events\n(* = basin corrected to match the event region)")
+                 "events\n(* = basin corrected to match event region; "
+                 "dashed = larger-region UGA/TZA variant)")
     ax.legend(loc="lower left", fontsize=8, frameon=True, ncol=2,
               title="country · basin")
 
@@ -83,6 +97,8 @@ def main():
         if cl[0] <= cen.x <= cl[1] and cl[2] <= cen.y <= cl[3]:
             axins.annotate(iso, (cen.x, cen.y), ha="center", va="center",
                            fontsize=11, fontweight="bold")
+    for iso, g, c in larger:           # TZA-large extent overlaps the cluster
+        g.boundary.plot(ax=axins, color=c, linewidth=1.7, linestyle="--")
     axins.set_xlim(cl[0], cl[1])
     axins.set_ylim(cl[2], cl[3])
     axins.set_aspect("equal")
