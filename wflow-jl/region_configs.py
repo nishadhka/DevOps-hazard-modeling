@@ -220,6 +220,28 @@ REGIONS = {
         "status": "complete",
         "case_folder": "dr_uga/dr_case11",
     },
+    "12_Malawi": {
+        "country_iso": "MWI",
+        "title": "Malawi - Lake Malawi / Shire / Upper Zambezi (HydroBASINS lev-5 anchor)",
+        "start": "2020-01-01",
+        "end": "2023-12-31",
+        "bounds": {
+            "west":  34.25,
+            "south": -17.70,
+            "east":  35.95,
+            "north": -13.43,
+        },
+        "grid_size": None,     # set after build
+        "active_cells": None,
+        "outlet": {"lon": None, "lat": None,
+                   "river": "Shire River → Zambezi",
+                   "upstream_km2": 42695},
+        "description": "Lev-5 anchor basin (HYBAS_ID 1051472390, PFAF 12221); 42,695 km² with 76% inside MWI, overflows to MOZ (south) and TZA (north headwaters).",
+        "impact": {"people_affected": None,
+                   "detail": "2020-23 dry-spells + post-Cyclone-Freddy 2023; 2015-16 SADC drought also relevant if window shifted."},
+        "status": "staged",
+        "case_folder": "dr_mwi/dr_case12",
+    },
 }
 
 # Wflow SBM default model parameters (common across all cases)
