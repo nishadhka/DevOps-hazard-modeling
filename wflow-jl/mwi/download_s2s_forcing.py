@@ -147,8 +147,18 @@ def main() -> None:
     client = None
     if not args.dry_run:
         import cdsapi
+        # credential precedence: env  ->  local mwi/.cdsapirc  ->  ~/.cdsapirc
         url = os.environ.get("CDSAPI_URL")
         key = os.environ.get("CDSAPI_KEY")
+        rc = Path(__file__).resolve().parent / ".cdsapirc"  # token lives here (gitignored)
+        if not (url and key) and rc.exists():
+            kv = dict(
+                line.split(":", 1)
+                for line in rc.read_text().splitlines()
+                if ":" in line and not line.strip().startswith("#")
+            )
+            url = url or kv.get("url", "").strip()
+            key = key or kv.get("key", "").strip()
         client = cdsapi.Client(url=url, key=key) if (url and key) else cdsapi.Client()
 
     for k in keys:

@@ -23,6 +23,8 @@ data/
 *-sa.json
 .netrc
 **/.netrc
+.cdsapirc
+**/.cdsapirc
 
 # Generated build/run scratch
 wflow-jl/.hydromt_extra/
