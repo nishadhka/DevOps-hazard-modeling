@@ -47,7 +47,7 @@ quickstart. Highlights:
 | SEAS5.1 SPI-3 forecast | `def`, `tail`, `agreement` | live |
 | JRC CDI (EADW / recompute) | `cdi` | **live — wired as a BN node** |
 | TAMSAT-ALERT seasonal WRSI | `wrsi_seas` | schema pinned; node wiring next |
-| wflow.jl 10-day WRSI (ensemble) | `wrsi10` | model proven (v4); wiring next |
+| wflow.jl 10-day WRSI | `wrsi10` | **prep wired** (`pipeline/wflow_wrsi_prep.py`, HydroBASINS L5/L6); awaits Malawi wflow output |
 | wflow.jl discharge (flood tail) | `flood_lik` | flood-IBF exists; fold in next |
 
 Next build steps (per the plan): `pipeline/wflow_wrsi_prep.py`

@@ -20,6 +20,7 @@ the DevOps-hazard-modeling repo. See the concept docs one level up:
 | `cdi_data_prep.py` | JRC Combined Drought Indicator (EADW / recompute) → admin-1 CDI CSV. |
 | `cdi_evidence_update.py` | Legacy post-hoc CDI likelihood update (superseded by the in-BN `cdi` node). |
 | `tamsat_alert_probe.py` | Pin the TAMSAT-ALERT WRSI schema before freezing the `wrsi_seas` node. |
+| `wflow_wrsi_prep.py` | **wflow.jl `output_grid_wrsi.nc` (aet/pet) → `wrsi10` node** per HydroBASINS level-5/6 polygon (WRSI = 100·ΣAET/ΣPET, dekadal or period). |
 | `plot_drought_bn_choropleth.py` | CRMA traffic-light choropleths. |
 | `cdi_bn_integration.md`, `evidence_nodes.md` | Design notes. |
 
@@ -46,6 +47,14 @@ julia --project=. drought_bn_ibf_v1.jl \
 
 # 4. Pin the TAMSAT-ALERT WRSI schema (before wiring wrsi_seas)
 uv run tamsat_alert_probe.py --year 2026 --month 01
+
+# 5. Build the wflow.jl wrsi10 node (Malawi, HydroBASINS level 6) once the
+#    wflow run has written output/output_grid_wrsi.nc:
+uv run wflow_wrsi_prep.py \
+    --wrsi-nc /mnt/wflow-secondary/v4_models/mwi/output/output_grid_wrsi.nc \
+    --level 6 --mode dekadal --out bn_inputs/wrsi10_mwi_2026-07.csv
+# → one row per Malawi level-6 sub-basin (9 within the level-5 anchor),
+#   keyed on id=HYBAS_ID, columns wrsi10_value/class/min/stress_prob + w10_p1..p4
 ```
 
 ## CDI evidence node
@@ -56,10 +65,26 @@ rules (Alert+high-deficit→Extreme; Full_recovery+improving→Minimal). Gated b
 `--cdi`; needs a `cdi_level_idx` (1–6), `cdi_level` string, or soft `cdi_p1..p6`
 column. Absent → `cdi=1` (No_drought), a strict no-op — existing runs unchanged.
 
-## Still to add (wflow.jl + TAMSAT sides)
+## wrsi10 node (wflow.jl)
 
-- `wflow_wrsi_prep.py` — ensemble wflow.jl `output_grid_wrsi.nc` → `wrsi10` +
-  `flood_lik` admin-1 columns (needs the basin↔admin-1 cropland crosswalk).
+`wflow_wrsi_prep.py` turns a wflow.jl `output_grid_wrsi.nc` (daily `aet`, `pet`)
+into per-HydroBASINS WRSI evidence. WRSI = 100·ΣAET/ΣPET (project canonical form,
+`shared/hydrobasins/wrsi_analysis.py`), 4 stress states No_Stress/Mild/Moderate/
+Severe on FAO bands (50/65/80). `--mode dekadal` (default) gives the season-to-
+date cumulative WRSI at the latest dekad — the operational 10-day node; `--mode
+period` the whole-run field. Boundaries are HydroBASINS Africa level 5 (country-
+scale anchor) or 6 (sub-basins), auto-subset to the WRSI grid and clipped to the
+run's `*_v4_basin.geojson` domain. For Malawi the level-5 anchor (HYBAS_ID
+1051472390) holds 9 level-6 sub-basins. Basins with no grid overlap get uniform
+soft evidence (a BN no-op). Verified on the rwa case; launch-ready for Malawi
+once its wflow output exists (`/mnt/wflow-secondary/v4_models/mwi/output/` is
+currently empty; the model has `forcing_s2s.nc` for the 10-day forecast).
+
+## Still to add (flood + TAMSAT sides)
+
+- `flood_lik` node — wflow.jl discharge/runoff (wet tail) per basin.
+- Ensemble WRSI — per-member `wrsi10` once multi-member S2S forcing is run
+  (current `forcing_s2s.nc` is a single trace).
 - `tamsat_alert_prep.py` — run/ingest TAMSAT-ALERT_API_V2 → `wrsi_seas` (schema
   already pinned by `tamsat_alert_probe.py`).
 - BN `crop_water_stress` / `agri_risk` branches (see `../wrsi_bn_integration_plan.md`).
