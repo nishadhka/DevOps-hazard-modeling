@@ -187,6 +187,58 @@ pass; end-to-end demonstration on a real WRSI grid.
 
 ## Option 2 — FPAR / vegetation-response node
 
+> **✅ DONE (2026-07-13).** `fpar_prep.py` + the `fpar` axis on the crop branch.
+>
+> **Data** — GDO fAPAR anomaly (`gdo_fpar_icechunk`, var `fpanv`, dekadal
+> 2012→now), the `zFPARc` analogue. Crop-fraction-weighted with the same ASAP
+> crop AFI and HydroBASINS boundaries as `wrsi10`, so the two align row-for-row.
+> Consumed, not produced.
+>
+> **`fpar` has 5 states, not 4** — `Unknown` is explicit. "No vegetation
+> evidence" and "vegetation observed healthy" are different propositions: the
+> first must be a strict no-op; the second is *positive* evidence that the crop
+> has not yet responded to a water deficit (ASAP L1) and must **temper** it. A
+> 4-state Healthy-default would silently turn missing data into a tempering
+> claim.
+>
+> **`compute_cws_probs` is graded, not `max()`.** The first cut used
+> `base = max(w10, fpar)`, which SATURATES: with either axis Severe the other
+> added nothing, and ASAP's L1/L2/L3 rungs all collapsed to one. Replaced with
+> `s = α·w + β·f + γ·min(w,f)` (α=0.70, β=0.80, γ=0.25), interpolated smoothly
+> onto the cws states. **β > α by design**: vegetation is *realised impact*, a
+> water deficit only a precursor — which is exactly why ASAP ranks FPAR-only
+> (L2) above meteo-only (L1). Scores are interpolated, not hard-binned, or a Ky
+> re-weighting that doesn't cross a state boundary would vanish.
+>
+> **Verified — the ASAP ladder now reproduces end-to-end** (identical met):
+> L0 neither → agri P(H∪E) **0.350 = met exactly** (no-op); L1 meteo-only
+> (veg observed healthy) → 0.582; L2 fpar-only → **0.731** (outranks L1); L3
+> both → **0.847**. Self-test 18 asserts `L1 < L2 < L3` and that observed-healthy
+> veg ranks below the same deficit with no veg data. **18/18 pass.**
+>
+> ⚠️ **`mFPARd` guard is NOT active by default.** ASAP flags a pixel critical
+> only when `zFPARc < −1 AND mFPARd < −10%·AVG(mFPAR)` — the second condition
+> suppresses false positives where inter-annual FPAR variability is tiny. It
+> needs **raw** FPAR + its historical mean; the GDO store carries only the
+> anomaly, so it cannot be computed from it. Pass `--mfpard-nc` +
+> `--mfpar-avg-nc` to switch the exact guard on; otherwise the run says so
+> loudly. Crop weighting confines the signal to cropland (removing most of the
+> arid low-variability pixels the guard targets) but does **not** replace it.
+>
+> ✅ **Vegetation double-count handled structurally.** The JRC CDI's Alert
+> classes (7–10) *already require* `fAPAR < −1` — the same signal. `cdi` is on
+> the met branch, `fpar` on the crop branch; they meet at `agri_risk`, so both
+> together would count vegetation twice (the same bug class as wrsi10↔cur).
+> Fix: build CDI with `cdi_data_prep.py --fapar-source none`, so CDI carries
+> only precipitation + soil moisture and the vegetation evidence lives solely in
+> the separable `fpar` node. `run_csv` reads CDI's `fapar_source` provenance and
+> **warns loudly** if `--fpar` is used against a fAPAR-bearing CDI.
+>
+> **Also fixed (bug found in Option 1):** `wflow_wrsi_prep.py` blended no-data /
+> thin-crop basins toward a *uniform* `w10_p*`, which puts 3/4 of the mass on
+> stressed states — escalating the posterior purely for lack of data. Both preps
+> now route that mass to the node's identity state (`No_Stress` / `Unknown`).
+
 **ASAP mechanism #2 (the `zFPARc` rung).** Escalation from "deficit possibly
 evolving into poor growth" (meteo) to "evidence of poor growth" needs an
 independent plant-response signal. **Dependency: after Option 1.**
