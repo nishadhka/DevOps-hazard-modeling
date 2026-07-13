@@ -784,12 +784,55 @@ end
 # crop branch alone cannot manufacture Extreme without meteo corroboration.
 const _CWS_SHIFT = (0.0, 0.4, 0.9, 1.5)
 
+# ── Shared-signal (redundancy) discount — the correlation-aware fusion column ──
+#
+# THE PROBLEM. The two branches are NOT conditionally independent. `wrsi10` is
+# wflow.jl's WRSI, forced by *observed* rainfall — so its dry signal shares an
+# origin with `cur` (ERA5 SPI-3 observation) and with the precipitation term
+# inside `cdi`, both of which sit on the met branch. They meet here, at
+# agri_risk. With a constant upward push, ONE missing-rain signal would escalate
+# the posterior TWICE (once through met_risk, again through cws).
+#
+# THE FIX. Discount the cws escalation by how much of that same rain signal the
+# met branch has *already* counted. met_risk is a monotone proxy for "how much
+# observed+forecast drought evidence has already fired", so we attenuate the
+# shift as met_risk rises:
+#
+#     λ(m) = 1 − κ·(m−1)/4        λ(1) = 1.0 … λ(5) = 1 − κ
+#     effective_shift(m, c) = _CWS_SHIFT[c] · λ(m)
+#
+# κ is the fraction of wrsi10's escalation power that is REDUNDANT with the met
+# branch (i.e. attributable to the shared rainfall signal). The remainder is
+# wflow's genuine hydrological value-add — soil-moisture storage, evaporative
+# demand, routing — which the met branch cannot see and which must still
+# escalate at full strength.
+#
+# Behaviour this buys:
+#   • met Minimal + cws Severe  → FULL escalation. Nothing was double-counted:
+#     rainfall looked fine, yet the water balance says the crop is failing. This
+#     is exactly wflow's marginal information and it must not be discounted.
+#   • met Extreme + cws Severe  → DISCOUNTED. The rain deficit already drove
+#     met_risk up; counting it again is the double-count we are removing.
+#   • cws No_Stress             → unchanged (shift is 0, λ irrelevant): the
+#     exact-identity no-op guarantee survives.
+#
+# κ = 0.5 is a first-pass EXPERT value, not a measurement. Calibrate it from the
+# empirical correlation between the cws state and cur/cdi over the hindcast, and
+# record the revision in the CPT history like any other curatorial act.
+const _SHARED_SIGNAL_KAPPA = 0.5
+
+"""Redundancy factor λ(m) ∈ [1−κ, 1]: how much of a cws escalation is still
+*new* information once met_risk=m has already fired. Decreasing in m."""
+_redundancy_lambda(m::Int)::Float64 = 1.0 - _SHARED_SIGNAL_KAPPA * (m - 1) / 4.0
+
 """5×5×4 tensor AGRI_CPT[agri_risk, risk, cws] — 100 entries (§3.2).
-Column cws=1 is the identity: AGRI_CPT[:, m, 1] == onehot(m)."""
+Column cws=1 is the identity: AGRI_CPT[:, m, 1] == onehot(m). The cws→agri
+shift is scaled by _redundancy_lambda(m) so a shared observed-rain signal is not
+counted twice across the two branches."""
 function build_agri_cpt()::Array{Float64,3}
     T = zeros(Float64, 5, 5, 4)
     for c in 1:4, m in 1:5
-        T[:, m, c] = _risk_bump(float(m) + _CWS_SHIFT[c])
+        T[:, m, c] = _risk_bump(float(m) + _CWS_SHIFT[c] * _redundancy_lambda(m))
     end
     return T
 end
@@ -1455,6 +1498,26 @@ function self_test()
     cws_healthy_flow = infer_cws(onehot(1, 4), onehot(1, 4), onehot(2, 3), Tc_cws)
     @assert CROP_STRESS_STATES[argmax(cws_healthy_flow)] == "No_Stress" "phase must not create stress on its own"
     @info "Test 14 (phenology Ky modifier):" veg=CROP_STRESS_STATES[argmax(cws_veg)] flowering=CROP_STRESS_STATES[argmax(cws_flow)] maturation=CROP_STRESS_STATES[argmax(cws_mat)]
+
+    # 16. SHARED-SIGNAL (redundancy) DISCOUNT — wrsi10 is wflow-forced by
+    #     *observed* rain, so it shares an origin with cur/cdi on the met branch.
+    #     The cws escalation must therefore shrink as met_risk (which already
+    #     counted that rain signal) rises — otherwise one missing-rain signal
+    #     escalates the posterior twice.
+    _exp_idx(v) = sum(k * v[k] for k in 1:5)
+    esc(m, c) = _exp_idx(Ta_agri[:, m, c]) - float(m)   # escalation in risk-index units
+    escs = [esc(m, 4) for m in 1:4]                     # cws=Severe, met 1..4
+    @assert all(escs[i] > escs[i + 1] for i in 1:3) "cws escalation must shrink as met_risk rises (redundancy discount)"
+    # The divergence case must NOT be discounted: rain looked fine, the water
+    # balance says otherwise — that is wflow's genuine marginal information.
+    @assert escs[1] > 1.4 "met Minimal + cws Severe must keep (near-)full escalation"
+    @info "Test 16 (shared-signal discount):" esc_met1=round(escs[1], digits=2) esc_met2=round(escs[2], digits=2) esc_met3=round(escs[3], digits=2) esc_met4=round(escs[4], digits=2) kappa=_SHARED_SIGNAL_KAPPA
+
+    # 17. The discount must not break the two standing guarantees.
+    @assert maximum(abs.(Ta_agri[:, 3, 1] .- onehot(3, 5))) < 1e-12 "identity no-op must survive the discount"
+    agri_bound = compute_agri_risk_probs([0.85, 0.15, 0.0, 0.0, 0.0], onehot(4, 4), Ta_agri)
+    @assert argmax(agri_bound) < 4 "boundedness must survive the discount"
+    @info "Test 17 (guarantees survive discount): identity + bounded OK"
 
     # ── Risk-cognition ladder + entropy confidence (action node deleted) ──────
     # 15. posterior_confidence: flat ⇒ 0, one-hot ⇒ 1, and it is a statement

@@ -125,12 +125,29 @@ Enabled with `--agri`; absent wrsi10 columns → disabled, behaviour unchanged.
 Adds `crop_stress`, `agri_risk_*`, `agri_risk_level`; CRMA then runs on
 `agri_risk`, with `crma_state_met` / `confidence_met` kept alongside.
 
-> ⚠️ **Known limitation.** `wrsi10` is wflow-derived from *observed* rainfall, so
-> it shares an origin with `cur` (ERA5 SPI-3) and the precipitation term inside
-> `cdi` — which sit on the met branch. They meet at `agri_risk` under a monotone
-> upward push, so one missing-rain signal can escalate the posterior twice. Fix
-> belongs in `AGRI_CPT` (correlation-aware fusion column, or a shared latent
-> observed-rainfall-deficit node).
+### Shared-signal (redundancy) discount — the correlation-aware fusion column
+
+The two branches are **not** conditionally independent: `wrsi10` is wflow-forced
+by *observed* rainfall, so its dry signal shares an origin with `cur` (ERA5
+SPI-3) and the precipitation term inside `cdi`, both on the met branch. With a
+constant upward push, one missing-rain signal would escalate the posterior
+**twice**. `AGRI_CPT` therefore scales the `cws` shift by how much of that rain
+signal met_risk has already counted:
+
+```
+λ(m) = 1 − κ·(m−1)/4                     κ = _SHARED_SIGNAL_KAPPA = 0.5
+effective_shift(m, c) = _CWS_SHIFT[c] · λ(m)
+```
+
+| | behaviour |
+|---|---|
+| met **Minimal** + cws Severe | **full** escalation (1.50) — rain looked fine but the water balance says the crop is failing. This is wflow's genuine marginal information and must *not* be discounted. |
+| met **Extreme** + cws Severe | **discounted** (0.94) — the rain deficit already drove met_risk up; counting it again is the double-count. |
+| cws **No_Stress** | unchanged — shift is 0, so the exact-identity no-op survives. |
+
+κ is a first-pass **expert** value, not a measurement. Calibrate it from the
+empirical correlation between the `cws` state and `cur`/`cdi` over the hindcast,
+and log the revision like any other curatorial act.
 
 **ASAP mechanism #1 (CAF > 25 %) is implemented in the prep**: WRSI is reduced
 **crop-fraction-weighted** using the ASAP 500 m crop AFI, so rangeland/bare area

@@ -120,15 +120,23 @@ options, decided per node:
 > 88.4 crop-weighted where cropland is patchy); with identical met evidence,
 > `agri_risk_level` escalates Moderate→Extreme as wrsi10 goes No_Stress→Severe.
 >
-> ⚠️ **Known limitation shipped with this option** — `wrsi10` is wflow-derived
-> from **observed** rainfall, so it shares an origin with `cur` (ERA5 SPI-3) and
-> the precipitation term inside `cdi`. Those sit on the met branch, `wrsi10` on
-> the crop branch, and they meet at `agri_risk` where `_CWS_SHIFT` applies a
-> monotone upward push ⇒ **one missing-rain signal can escalate the posterior
-> twice**. Approach B localises this to the 100-entry `AGRI_CPT`, which is where
-> to fix it (correlation-aware fusion column, or a shared latent
-> "observed rainfall deficit" node). Tracked as the top outstanding modelling
-> correction.
+> **✅ Double-counting FIXED (2026-07-13).** `wrsi10` is wflow-derived from
+> **observed** rainfall, so it shares an origin with `cur` (ERA5 SPI-3) and the
+> precipitation term inside `cdi` — both on the met branch. Meeting at
+> `agri_risk` under a constant upward push, one missing-rain signal would
+> escalate the posterior **twice**. Fixed exactly where Approach B localises it:
+> the 100-entry `AGRI_CPT` is now a **correlation-aware fusion column**, scaling
+> the cws shift by `λ(m) = 1 − κ·(m−1)/4` (`κ = _SHARED_SIGNAL_KAPPA = 0.5`),
+> so escalation shrinks as met_risk — which already counted that rain signal —
+> rises. Escalation runs **1.50 → 1.31 → 1.12 → 0.94** across met=Minimal→High
+> (self-test 16). Crucially the **divergence case is not discounted**: met
+> Minimal + cws Severe keeps full escalation, because "rain looked fine but the
+> water balance says the crop is failing" *is* wflow's marginal information.
+> Both standing guarantees survive (self-test 17): exact identity at
+> `cws=No_Stress`, and boundedness. **17/17 self-tests pass.**
+>
+> κ is a first-pass **expert** value, not a measurement — calibrate from the
+> empirical `cws`↔`cur`/`cdi` correlation over the hindcast and log the revision.
 
 **ASAP mechanism #1 (CAF > 25 %).** Anomalies counted only on active crop area;
 warn when > 25 % of *active* area is anomalous. **Dependency: FIRST** — it
