@@ -89,6 +89,16 @@ STRESS_THRESHOLD = 80.0                # WRSI < 80 counts as "under stress"
 DEFAULT_HYBAS_DIR = (Path(__file__).resolve().parents[2]
                      / "shared" / "hydrobasins" / "data")
 
+# ASAP crop Area-Fraction Image (mechanism #1 in asap-crma-gap-and-bn-role.md):
+# JRC ASAP v04 global crop AFI, EPSG:4326, ~500 m, pixel value = crop cover %
+# (0-100, verified against Iowa/Punjab crop-dense regions). Consumed, not
+# produced. Download: https://mars.jrc.ec.europa.eu/asap/files/asap_mask_crop_v04.tif
+DEFAULT_CROP_AFI = "/mnt/wflow-data/asap/asap_mask_crop_v04.tif"
+# ASAP active-area gate: warn only where the anomalous share exceeds this
+# fraction of the *active* (crop) area (note.txt L123). Used here as a soft
+# evidence-strength gate, not a hard cutoff.
+CAF_GATE = 0.25
+
 # Rough country label for the domain (metadata only; wrsi10 is basin-keyed).
 DEFAULT_COUNTRY = "Malawi"
 
@@ -185,33 +195,100 @@ def rasterize_basins(gdf: gpd.GeoDataFrame, lat: np.ndarray, lon: np.ndarray
     return mask
 
 
+def load_crop_fraction(afi_path: Path, lat: np.ndarray, lon: np.ndarray
+                       ) -> np.ndarray | None:
+    """Windowed-read the ASAP crop AFI over the WRSI grid bbox and regrid
+    (nearest) to the WRSI (lat, lon) grid. Returns crop fraction in [0,1], or
+    None if the AFI is unavailable (→ caller falls back to unweighted)."""
+    if not Path(afi_path).exists():
+        print(f"[wrsi-prep] crop AFI not found ({afi_path}); "
+              f"falling back to UNWEIGHTED (flat) reduction")
+        return None
+    import rasterio
+    from rasterio.windows import from_bounds
+    res_lat = abs(float(lat[1] - lat[0])); res_lon = abs(float(lon[1] - lon[0]))
+    w = float(lon.min()) - res_lon; e = float(lon.max()) + res_lon
+    s = float(lat.min()) - res_lat; n = float(lat.max()) + res_lat
+    with rasterio.open(afi_path) as ds:
+        win = from_bounds(w, s, e, n, ds.transform)
+        a = ds.read(1, window=win).astype("float64")            # crop % 0-100
+        wt = ds.window_transform(win)
+        nrow, ncol = a.shape
+        src_lon = wt.c + (np.arange(ncol) + 0.5) * wt.a
+        src_lat = wt.f + (np.arange(nrow) + 0.5) * wt.e          # wt.e < 0
+    # nearest-neighbour regrid to the WRSI grid
+    ji = np.abs(src_lon[None, :] - lon[:, None]).argmin(axis=1)
+    ii = np.abs(src_lat[None, :] - lat[:, None]).argmin(axis=1)
+    frac = a[np.ix_(ii, ji)] / 100.0
+    return np.clip(frac, 0.0, 1.0)
+
+
+def _weighted_median(vals: np.ndarray, wts: np.ndarray) -> float:
+    """Weighted median (50th weighted percentile)."""
+    order = np.argsort(vals)
+    v = vals[order]; w = wts[order]
+    cw = np.cumsum(w)
+    if cw[-1] <= 0:
+        return float(np.median(vals))
+    cutoff = 0.5 * cw[-1]
+    return float(v[np.searchsorted(cw, cutoff)])
+
+
 # ─── per-basin zonal reduction → wrsi10 node ─────────────────────────────────
 
 
 def aggregate(wrsi: np.ndarray, mask: np.ndarray, gdf: gpd.GeoDataFrame,
-              lat: np.ndarray, lon: np.ndarray) -> pd.DataFrame:
+              lat: np.ndarray, lon: np.ndarray,
+              crop_frac: np.ndarray | None = None) -> pd.DataFrame:
+    """Per-basin WRSI reduction → wrsi10 node rows.
+
+    If `crop_frac` (0..1 grid) is given, the reduction is **crop-fraction-
+    weighted** (ASAP mechanism #1): each pixel's WRSI is weighted by its crop
+    cover, so a rangeland/bare basin neither dilutes nor fabricates the crop
+    signal. The soft-evidence bins `w10_p*` become crop-weighted class shares,
+    and `wrsi10_stress_prob` is the crop-weighted stressed share. `crop_active_
+    frac` (mean crop fraction) drives the ASAP CAF>25% soft gate: below the
+    gate the soft evidence is shrunk toward uniform (weak evidence = BN no-op),
+    the Bayesian analogue of "no warning unless >25% of active area is hit".
+    """
+    weighted = crop_frac is not None
     rows = []
     for r in range(len(gdf)):
         sel = (mask == r) & np.isfinite(wrsi)
         if sel.sum() < 1:
-            # centroid fallback — nearest pixel
             pt = gdf.iloc[r].geometry.representative_point()
             i = int(np.argmin(np.abs(lat - pt.y)))
             j = int(np.argmin(np.abs(lon - pt.x)))
             vals = np.array([wrsi[i, j]], dtype="float64")
-            vals = vals[np.isfinite(vals)]
+            wts = np.array([crop_frac[i, j] if weighted else 1.0], dtype="float64")
+            ok = np.isfinite(vals)
+            vals, wts = vals[ok], wts[ok]
+            crop_active = float(wts[0]) if weighted and wts.size else np.nan
         else:
             vals = wrsi[sel].astype("float64")
-        if vals.size == 0:
+            wts = (crop_frac[sel].astype("float64") if weighted
+                   else np.ones(vals.size))
+            crop_active = float(crop_frac[mask == r].mean()) if weighted else np.nan
+
+        if vals.size == 0 or (weighted and wts.sum() <= 0):
             med = np.nan; vmin = np.nan
-            fracs = np.full(4, 0.25)          # no data → uniform soft evidence
+            fracs = np.full(4, 0.25)          # no (crop) data → uniform = BN no-op
             stress_prob = np.nan
         else:
-            med = float(np.median(vals))
-            vmin = float(np.min(vals))
+            med = _weighted_median(vals, wts) if weighted else float(np.median(vals))
+            # tail = worst pixel that carries meaningful crop cover
+            tail_sel = (wts >= 0.10) if weighted else np.ones(vals.size, bool)
+            vmin = float(np.min(vals[tail_sel])) if tail_sel.any() else float(np.min(vals))
             cls = np.array([classify_wrsi(v) for v in vals])
-            fracs = np.array([(cls == k).mean() for k in (1, 2, 3, 4)], dtype="float64")
-            stress_prob = float((vals < STRESS_THRESHOLD).mean())
+            W = wts.sum()
+            fracs = np.array([wts[cls == k].sum() / W for k in (1, 2, 3, 4)],
+                             dtype="float64")
+            stress_prob = float(wts[vals < STRESS_THRESHOLD].sum() / W)
+            # ASAP CAF>25% soft gate: shrink evidence toward uniform when the
+            # basin's crop area is thin (crop_active < CAF_GATE).
+            if weighted and np.isfinite(crop_active):
+                strength = min(1.0, crop_active / CAF_GATE)
+                fracs = strength * fracs + (1.0 - strength) * np.full(4, 0.25)
         b = gdf.iloc[r]
         hid = int(b["HYBAS_ID"]) if "HYBAS_ID" in gdf.columns else r
         pfaf = int(b["PFAF_ID"]) if "PFAF_ID" in gdf.columns else -1
@@ -221,6 +298,7 @@ def aggregate(wrsi: np.ndarray, mask: np.ndarray, gdf: gpd.GeoDataFrame,
             "name":               f"HYBAS_{hid}",
             "pfaf_id":            pfaf,
             "sub_area_km2":       area,
+            "crop_active_frac":   None if not np.isfinite(crop_active) else round(crop_active, 4),
             "wrsi10_value":       None if not np.isfinite(med) else round(med, 2),
             "wrsi10_class":       WRSI10_STATES[classify_wrsi(med) - 1],
             "wrsi10_min":         None if not np.isfinite(vmin) else round(vmin, 2),
@@ -252,6 +330,11 @@ def main() -> None:
                          "dekad (10-day node); period = whole-run WRSI")
     ap.add_argument("--country", default=DEFAULT_COUNTRY,
                     help="country label written to the CSV (metadata only)")
+    ap.add_argument("--crop-afi", default=DEFAULT_CROP_AFI,
+                    help="ASAP crop Area-Fraction Image (crop %% 0-100) for "
+                         "CAF>25%% crop weighting. Consumed, not produced.")
+    ap.add_argument("--no-crop-weight", action="store_true",
+                    help="disable crop weighting (flat reduction over all pixels)")
     args = ap.parse_args()
 
     wrsi_nc = Path(args.wrsi_nc)
@@ -286,10 +369,20 @@ def main() -> None:
     print(f"[wrsi-prep] {len(gdf)} level-{args.level} basins over grid "
           f"{tuple(round(x, 2) for x in bbox)}")
 
+    crop_frac = None
+    if not args.no_crop_weight:
+        crop_frac = load_crop_fraction(Path(args.crop_afi), lat, lon)
+        if crop_frac is not None:
+            print(f"[wrsi-prep] crop weighting ON (ASAP AFI); grid crop-cover "
+                  f"mean={100*np.nanmean(crop_frac):.1f}%  "
+                  f">25%%={100*np.mean(crop_frac > CAF_GATE):.0f}% of pixels")
+    else:
+        print("[wrsi-prep] crop weighting OFF (--no-crop-weight)")
+
     mask = rasterize_basins(gdf, lat, lon)
-    df = aggregate(wrsi, mask, gdf, lat, lon)
+    df = aggregate(wrsi, mask, gdf, lat, lon, crop_frac=crop_frac)
     df.insert(2, "country", args.country)
-    df.insert(6, "target_date", str(target.date()))
+    df.insert(7, "target_date", str(target.date()))
 
     out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out, index=False)
