@@ -179,7 +179,7 @@ Concrete changes, in dependency order:
    member WRSI with SEAS5 member SPI only if members can be physically
    paired; otherwise keep storylines met-only for now (document this).
 9. **Self-tests**: worst case (Severe drought + Severe WRSI both horizons
-   → Extreme/Actionable_Risk), divergence case (met Extreme + WRSI
+   → Extreme/Review), divergence case (met Extreme + WRSI
    No_Stress → agri risk < met risk), missing-WRSI case (agri ≈ met),
    entropy check on missing evidence.
 

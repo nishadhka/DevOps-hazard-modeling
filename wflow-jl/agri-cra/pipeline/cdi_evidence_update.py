@@ -59,6 +59,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from crma_ladder import CRMA_STATES  # single source of truth for the ladder
+
 # CDI level → row index (must match cdi_data_prep.py LEVEL_TO_IDX
 # minus 1 to convert 1..6 to 0..5):
 LEVEL_NAMES = ["No_drought", "Full_recovery", "Partial_recovery",
@@ -95,16 +97,16 @@ L = L / L.sum(axis=0, keepdims=True)
 
 def crma_decide(risk_probs: np.ndarray, gamma: float = 0.20):
     """Cost-loss rule — same logic as drought_bn_ibf_v1.jl's compute_crma_state."""
-    p_act      = float(risk_probs[3] + risk_probs[4])
+    p_review   = float(risk_probs[3] + risk_probs[4])
     p_assess   = float(risk_probs[2] + risk_probs[3] + risk_probs[4])
     p_evaluate = float(risk_probs[1] + risk_probs[2] + risk_probs[3] + risk_probs[4])
-    θ_act      = gamma
+    θ_review   = gamma
     θ_assess   = max(2 * gamma, 0.40)
     θ_evaluate = max(3 * gamma, 0.30)
 
-    if p_act >= θ_act:
-        return ("Actionable_Risk", "Red",
-                f"P(High∪Extreme)={p_act:.2f} ≥ C/L={θ_act:.2f}")
+    if p_review >= θ_review:
+        return ("Review", "Red",
+                f"P(High∪Extreme)={p_review:.2f} ≥ C/L={θ_review:.2f}")
     if p_assess >= θ_assess:
         return ("Assess", "Orange",
                 f"P(Mod∪High∪Extreme)={p_assess:.2f} ≥ {θ_assess:.2f}")
@@ -237,9 +239,9 @@ def main() -> None:
     bn.to_csv(out, index=False)
 
     pre  = bn["crma_state_pre_cdi"].value_counts().reindex(
-        ["Monitor", "Evaluate", "Assess", "Actionable_Risk"], fill_value=0)
+        CRMA_STATES, fill_value=0)
     post = bn["crma_state"].value_counts().reindex(
-        ["Monitor", "Evaluate", "Assess", "Actionable_Risk"], fill_value=0)
+        CRMA_STATES, fill_value=0)
     print(f"[cdi-update] wrote {out}  rows={n}  updated={n_updated}  "
           f"crma-flips={n_changed_crma}")
     if len(sources) == 2:

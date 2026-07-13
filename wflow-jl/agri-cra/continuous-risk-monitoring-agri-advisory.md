@@ -218,7 +218,7 @@ basis risk directly:
   crop water stress at sensitive stages*, which is far closer to actual loss
   than seasonal rainfall totals.
 - WRSI/impact triggers are **agronomically meaningful and auditable**: the
-  farmer can see *why* the posterior reached *Actionable_Risk* (the logged
+  farmer can see *why* the posterior reached *Review* (the logged
   evidence trail), and so can the regulator.
 - **Epistemic verification** (Table 3 N2) provides the hindcast calibration
   insurers and reinsurers require: were the belief trajectories that would
@@ -232,7 +232,7 @@ basis risk directly:
   recomputable posterior + logged evidence (mapping Tables 2 #8, #9) *is* that
   trigger — any member can rerun it and challenge it ("remove stream X").
 - **Forecast-based action (anticipatory finance):** the CRMA state ladder
-  (*Monitor → Evaluate → Assess → Actionable_Risk*) maps directly onto
+  (*Monitor → Evaluate → Assess → Review*) maps directly onto
   pre-agreed, pre-financed action windows — releasing funds on *confidence*,
   ahead of loss, at the dekadal cadence that matches the intervention window
   in §4.1.

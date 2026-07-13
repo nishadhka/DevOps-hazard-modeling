@@ -38,7 +38,9 @@ TRAFFIC_COLORS = {
     "Orange": "#ff9800",
     "Red":    "#f44336",
 }
-CRMA_ORDER = ["Monitor", "Evaluate", "Assess", "Actionable_Risk"]
+from crma_ladder import CRMA_ABBREV, CRMA_STATES  # single source of truth
+
+CRMA_ORDER = CRMA_STATES
 
 
 def main() -> None:
@@ -81,11 +83,10 @@ def main() -> None:
         merged.plot(color=merged["_color"], edgecolor="black",
                     linewidth=0.3, ax=ax)
         counts = df["crma_state"].value_counts().reindex(CRMA_ORDER, fill_value=0)
-        title = (
-            f"init {date}\n"
-            f"Mon={counts['Monitor']}  Eva={counts['Evaluate']}  "
-            f"Ass={counts['Assess']}  Act={counts['Actionable_Risk']}"
-        )
+        # .get(): a state absent from this init must not KeyError.
+        tally = "  ".join(f"{CRMA_ABBREV[s]}={counts.get(s, 0)}"
+                          for s in CRMA_STATES)
+        title = f"init {date}\n{tally}"
         ax.set_title(title, fontsize=10)
         ax.set_xticks([]); ax.set_yticks([])
         for s in ax.spines.values():

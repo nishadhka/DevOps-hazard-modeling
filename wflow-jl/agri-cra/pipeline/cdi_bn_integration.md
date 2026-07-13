@@ -550,10 +550,10 @@ want both.
 
 ## 7. What this unlocks for analysts
 
-- **CDI Alert + BN Actionable_Risk**: highest-confidence signal —
+- **CDI Alert + BN Review**: highest-confidence signal —
   current observations *and* forward forecasts both stress.
   Trigger anticipatory action without further deliberation.
-- **CDI Watch + BN Actionable_Risk**: forecast-leading —
+- **CDI Watch + BN Review**: forecast-leading —
   ground-truth not yet flagged, but model says it's coming;
   prepare logistics but consider waiting for CDI Warning before
   cash-out.
