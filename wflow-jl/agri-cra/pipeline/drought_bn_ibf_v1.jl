@@ -66,7 +66,14 @@ const RISK_STATES         = ["Minimal", "Low", "Moderate", "High", "Extreme"]  #
 # phenology — into `crop_stress`, then agri_risk = f(met_risk, crop_stress).
 # All monotonic increasing-stress order (idx 1 = least stressed).
 const WRSI10_STATES       = ["No_Stress", "Mild", "Moderate", "Severe"]        # 4
-const FPAR_STATES         = ["Healthy", "Mild", "Moderate", "Severe_Decline"]  # 4 (Option 2)
+# fpar carries an explicit `Unknown` state (Option 2). "No vegetation evidence"
+# and "vegetation observed healthy" are NOT the same proposition: the first must
+# be a no-op, while the second is positive evidence that the crop has not (yet)
+# responded to a water deficit — ASAP's level-1 "possibly evolving into poor
+# growth", which should TEMPER the water signal. Collapsing them (as a 4-state
+# Healthy-default would) silently turns missing data into a tempering claim.
+const FPAR_STATES         = ["Unknown", "Healthy", "Mild",
+                             "Moderate", "Severe_Decline"]                     # 5
 # phase is a Ky *modifier*, not a stress axis (Option 3).
 const PHASE_STATES        = ["Vegetative", "Flowering", "Maturation"]          # 3
 const CROP_STRESS_STATES  = ["No_Stress", "Mild", "Moderate", "Severe"]        # 4 (cws)
@@ -74,6 +81,9 @@ const AGRI_RISK_STATES    = RISK_STATES                                        #
 # FAO WRSI class cutoffs (WRSI = 100·ΣAET/ΣPET): >=80 no-stress, 65-80 mild,
 # 50-65 moderate, <50 severe. Mirrors classify_wrsi() in wflow_wrsi_prep.py.
 const WRSI_THRESHOLDS     = (no_stress=80.0, mild=65.0, moderate=50.0)
+# fAPAR-anomaly (zFPARc) cutoffs — same −0.5/−1.0/−1.5 convention as SPI/CDI.
+# Mirrors classify_fpar() in fpar_prep.py.
+const FPAR_THRESHOLDS     = (healthy=-0.5, mild=-1.0, moderate=-1.5)
 # CRMA risk-COGNITION ladder. All four are analytical/attention states, not
 # actions: the system says how much scrutiny a unit warrants, never what to do.
 # `Review` (was `Actionable_Risk`) = "escalate for senior/organisational review;
@@ -234,6 +244,33 @@ function categorize_wrsi10(label::AbstractString)::Int
     s == "moderate"  && return 3
     s == "severe"    && return 4
     return 1
+end
+
+"""
+Categorise an fAPAR anomaly (the ASAP `zFPARc` analogue; GDO `fpanv`) into the
+`fpar` vegetation-response index 1..4. Drought-side: lower z = worse vegetation.
+Cutoffs follow the SPI/CDI convention used across the engine (−0.5/−1.0/−1.5);
+ASAP's critical trigger (z < −1) falls inside Moderate ∪ Severe_Decline.
+NaN/missing → 1 (Healthy), a no-op in the crop branch.
+  1 Healthy (z ≥ −0.5)   2 Mild (−1.0..−0.5)
+  3 Moderate (−1.5..−1.0) 4 Severe_Decline (z < −1.5)
+"""
+function categorize_fpar(z::Real)::Int
+    v = float(z)
+    isnan(v) && return 1                              # Unknown — no-op
+    v >= FPAR_THRESHOLDS.healthy  && return 2         # Healthy (observed)
+    v >= FPAR_THRESHOLDS.mild     && return 3         # Mild
+    v >= FPAR_THRESHOLDS.moderate && return 4         # Moderate      ← ASAP-critical
+    return 5                                          # Severe_Decline ← ASAP-critical
+end
+
+function categorize_fpar(label::AbstractString)::Int
+    s = lowercase(strip(String(label)))
+    s == "healthy"        && return 2
+    s == "mild"           && return 3
+    s == "moderate"       && return 4
+    s == "severe_decline" && return 5
+    return 1  # "" / "unknown" / unrecognised → Unknown (no-op)
 end
 
 # ============================================================================
@@ -701,6 +738,18 @@ onehot(idx::Int, k::Int) = (v = zeros(Float64, k); v[idx] = 1.0; v)
 # produces `risk`; this layer fuses it with the crop-water-stress branch. All
 # functions are pure and enumerable, so the CPTs are materialised once.
 
+# cws scoring coefficients (ASAP-faithful; see compute_cws_probs).
+# β > α: vegetation is realised impact, water deficit only a precursor — which
+# is why ASAP puts FPAR-only (L2) above meteo-only (L1). γ is the meteo+veg
+# convergence bonus (ASAP L3). Expert first-pass values; calibrate against
+# realised yield/loss and log the revision like any other curatorial act.
+const _CWS_ALPHA            = 0.70   # weight on wrsi10 (water deficit)
+const _CWS_BETA             = 0.80   # weight on fpar   (vegetation response)
+const _CWS_GAMMA            = 0.25   # convergence bonus, scaled by the weaker axis
+const _CWS_HEALTHY_TEMPER   = 0.75   # observed-healthy veg damps a water deficit (L1)
+const _CWS_FLOWERING_AMP    = 1.25   # FAO-33 Ky: flowering amplifies
+const _CWS_MATURATION_DAMP  = 0.75   # FAO-33 Ky: maturation damps
+
 """
 crop_water_stress (cws) distribution [4] given the three crop-branch parents,
 per bn-approach-b-crop-stress-subbranch.md §3.1:
@@ -718,27 +767,56 @@ per bn-approach-b-crop-stress-subbranch.md §3.1:
 Defaults (fpar=1, phase=1) make cws track wrsi10 — the Option-1 configuration.
 """
 function compute_cws_probs(w10::Int, fpar::Int=1, phase::Int=1)::Vector{Float64}
-    base = max(w10, fpar)
-    if w10 >= 2 && fpar >= 2
-        base = min(4, base + 1)            # meteo+veg convergence (ASAP L3)
+    w = w10 - 1                              # 0..3 water-deficit stress
+    s = 0.0
+    if fpar == 1
+        # ── No vegetation evidence (Unknown) ── crop stress rests on wrsi10
+        # alone. s = w reproduces the Option-1 mapping exactly, so absent FPAR
+        # is a strict no-op on the Option-1 behaviour.
+        s = float(w)
+    else
+        f = fpar - 2                         # 0..3 (Healthy .. Severe_Decline)
+        # Graded, NOT max(): a single saturated axis must not swamp the other,
+        # or ASAP's L1/L2/L3 rungs collapse into one.
+        #   β > α — vegetation is REALISED impact; a water deficit is only a
+        #   precursor ("possibly evolving into poor growth"), which is exactly
+        #   why ASAP ranks FPAR-only (L2) above meteo-only (L1).
+        #   γ·min(w,f) — the convergence bonus: meteo AND vegetation both firing
+        #   is ASAP's L3 rung, and must exceed either alone.
+        s = _CWS_ALPHA * w + _CWS_BETA * f + _CWS_GAMMA * min(w, f)
+        if f == 0 && w > 0
+            # Observed-healthy vegetation under a water deficit = ASAP L1. The
+            # plant has not (yet) responded, so temper — but do not zero it: the
+            # deficit is still real and may still evolve.
+            s *= _CWS_HEALTHY_TEMPER
+        end
     end
-    if base >= 2                            # phenology re-weights real stress only
-        phase == 2 && (base = min(4, base + 1))   # Flowering  → amplify
-        phase == 3 && (base = max(1, base - 1))   # Maturation → damp
+    # Phenology (FAO-33 Ky) re-weights REAL stress only — it never creates it.
+    if s > 0
+        phase == 2 && (s *= _CWS_FLOWERING_AMP)    # Flowering  → amplify
+        phase == 3 && (s *= _CWS_MATURATION_DAMP)  # Maturation → damp
     end
-    # Peaked, lightly MaxEnt-smoothed. Kept tight at base=1 so "no stress on any
-    # axis" does not manufacture crop-stress mass out of smoothing alone.
-    probs = fill(0.01, 4)
-    probs[base] = 0.94
-    base > 1 && (probs[base - 1] += 0.02)
-    base < 4 && (probs[base + 1] += 0.02)
+    # score → cws distribution by LINEAR INTERPOLATION between the bracketing
+    # states (not hard binning): a Ky re-weighting or a healthy-veg temper must
+    # move the posterior even when it does not cross a state boundary. Hard
+    # binning silently swallows exactly those effects.
+    #
+    # t = 1 + clamp(s, 0, 3) maps the score onto the 4 cws states, and makes the
+    # Unknown branch (s = w) land on an exact integer ⇒ a clean one-hot ⇒ absent
+    # FPAR is a strict identity on the Option-1 mapping.
+    t = 1.0 + clamp(s, 0.0, 3.0)
+    lo = floor(Int, t); hi = min(lo + 1, 4); frac = t - lo
+    probs = zeros(Float64, 4)
+    probs[lo] += (1.0 - frac); probs[hi] += frac
     return probs ./ sum(probs)
 end
 
-"""4×4×4×3 tensor CWS_CPT[cws, wrsi10, fpar, phase] — 192 entries (§3.1)."""
+"""4×4×5×3 tensor CWS_CPT[cws, wrsi10, fpar, phase] — 240 entries (§3.1).
+fpar has 5 states (Unknown + 4), so absent vegetation evidence is a state, not a
+silent default."""
 function build_cws_cpt()::Array{Float64,4}
-    T = zeros(Float64, 4, 4, 4, 3)
-    for ph in 1:3, fp in 1:4, w in 1:4
+    T = zeros(Float64, 4, 4, 5, 3)
+    for ph in 1:3, fp in 1:5, w in 1:4
         T[:, w, fp, ph] = compute_cws_probs(w, fp, ph)
     end
     return T
@@ -752,7 +830,7 @@ the met-side infer_soft_matmul.
 function infer_cws(w10_ev::Vector{Float64}, fpar_ev::Vector{Float64},
                    phase_ev::Vector{Float64}, T::Array{Float64,4})::Vector{Float64}
     cws = zeros(Float64, 4)
-    @inbounds for ph in 1:3, fp in 1:4, w in 1:4
+    @inbounds for ph in 1:3, fp in 1:5, w in 1:4
         wt = w10_ev[w] * fpar_ev[fp] * phase_ev[ph]
         wt > 0 || continue
         for k in 1:4
@@ -1225,6 +1303,7 @@ end
 function run_csv(input_csv::String, output_csv::String;
                  include_agreement::Bool, include_tail_risk::Bool,
                  include_cdi::Bool=false, include_agri::Bool=false,
+                 include_fpar::Bool=false,
                  cost_loss_ratio::Float64=0.2, use_rxinfer::Bool=true)
     df = CSV.read(input_csv, DataFrames.DataFrame)
     colnames = names(df)
@@ -1242,6 +1321,37 @@ function run_csv(input_csv::String, output_csv::String;
     if include_agri && !has_w10
         @warn "--agri requested but no w10_p*/wrsi10_value/wrsi10_class columns; disabling"
         include_agri = false
+    end
+    # fpar — the ASAP Option-2 vegetation-response axis (fpar_prep.py).
+    has_fp_soft = all("fpar_p$i" in colnames for i in 1:5)
+    has_fp_val  = "fpar_value" in colnames
+    has_fp_cls  = "fpar_class" in colnames
+    has_fpar = has_fp_soft || has_fp_val || has_fp_cls
+    if include_fpar && !has_fpar
+        @warn "--fpar requested but no fpar_p*/fpar_value/fpar_class columns; disabling"
+        include_fpar = false
+    end
+    if include_fpar && !include_agri
+        @warn "--fpar has no effect without --agri (fpar feeds the crop-stress branch)"
+    end
+    # VEGETATION DOUBLE-COUNT GUARD. The JRC CDI's Alert classes (7-10) already
+    # require fAPAR < -1 — the same signal `fpar` carries. `cdi` sits on the met
+    # branch and `fpar` on the crop branch; they meet at agri_risk, so running
+    # both against a fAPAR-bearing CDI counts vegetation twice (the same class of
+    # bug as the wrsi10<->cur rainfall double-count). Structural fix: build CDI
+    # with `cdi_data_prep.py --fapar-source none`, which stamps fapar_source.
+    if include_fpar && include_cdi
+        fsrc = "fapar_source" in colnames ?
+               lowercase(strip(string(first(skipmissing(df.fapar_source))))) : "unknown"
+        if fsrc != "none"
+            @warn """VEGETATION DOUBLE-COUNT: --fpar with a CDI built using fAPAR \
+                     (fapar_source=$fsrc). CDI Alert already requires fAPAR<-1, so the \
+                     vegetation signal is counted twice across the met and crop branches. \
+                     Rebuild CDI with `cdi_data_prep.py --fapar-source none` so the \
+                     vegetation evidence lives only in the separable fpar node."""
+        else
+            @info "fpar active; CDI built without fAPAR (fapar_source=none) — vegetation counted once ✓"
+        end
     end
     # CDI evidence node — from the sidecar produced by cdi_data_prep.py, merged
     # onto the prep CSV on `id`. Prefer the integer level, fall back to the
@@ -1330,21 +1440,29 @@ function run_csv(input_csv::String, output_csv::String;
         Tc = build_cws_cpt(); Ta = build_agri_cpt()
         _w10_idx(row) = has_w10_val ? categorize_wrsi10(_f(row.wrsi10_value)) :
                         has_w10_cls ? categorize_wrsi10(_s(row.wrsi10_class)) : 1
+        _fp_idx(row) = has_fp_val ? categorize_fpar(_f(row.fpar_value)) :
+                       has_fp_cls ? categorize_fpar(_s(row.fpar_class)) : 1
         rows = collect(DataFrames.eachrow(df))
         # Preserve the met-only CRMA before overwriting the primary columns.
         out.crma_state_met    = copy(out.crma_state)
         out.traffic_light_met = copy(out.traffic_light)
         crop_lvl = Vector{String}(undef, length(results))
+        fpar_lvl = Vector{String}(undef, length(results))
         agri = [zeros(Float64, 5) for _ in results]
         for (i, r) in enumerate(results)
             row = rows[i]
-            w10_ev  = something(_soft("w10",   4, row), onehot(_w10_idx(row), 4))
-            fpar_ev = something(_soft("fpar",  4, row), onehot(1, 4))  # Option 2
+            w10_ev = something(_soft("w10", 4, row), onehot(_w10_idx(row), 4))
+            fp_i   = include_fpar ? _fp_idx(row) : 1
+            fpar_ev = include_fpar ?
+                      something(_soft("fpar", 5, row), onehot(fp_i, 5)) :
+                      onehot(1, 5)                       # absent → Unknown = no-op
             phase_ev = something(_soft("phase", 3, row), onehot(1, 3)) # Option 3
+            fpar_lvl[i] = FPAR_STATES[fp_i]
             cws = infer_cws(w10_ev, fpar_ev, phase_ev, Tc)
             crop_lvl[i] = CROP_STRESS_STATES[argmax(cws)]
             agri[i] = compute_agri_risk_probs(r.risk_probabilities, cws, Ta)
         end
+        include_fpar && (out.fpar_class = fpar_lvl)
         out.crop_stress    = crop_lvl
         out.agri_minimal   = [a[1] for a in agri]
         out.agri_low       = [a[2] for a in agri]
@@ -1458,7 +1576,7 @@ function self_test()
     @info "Test 9 (cws=No_Stress → identity):" max_abs_diff=maximum(abs.(agri_id .- met))
 
     # 10. wrsi10 Severe escalates agri_risk above met_risk.
-    cws_sev = infer_cws(onehot(4, 4), onehot(1, 4), neutral_phase, Tc_cws)
+    cws_sev = infer_cws(onehot(4, 4), onehot(1, 5), neutral_phase, Tc_cws)
     agri_sev = compute_agri_risk_probs(met, cws_sev, Ta_agri)
     @assert CROP_STRESS_STATES[argmax(cws_sev)] == "Severe" "Severe WRSI → cws Severe"
     @assert (agri_sev[4] + agri_sev[5]) > (met[4] + met[5]) "Severe WRSI must escalate P(High∪Extreme)"
@@ -1466,7 +1584,7 @@ function self_test()
 
     # 11. wrsi10 No_Stress through the cws CPT ≈ met (no spurious escalation
     #     from smoothing leakage).
-    cws_ok = infer_cws(onehot(1, 4), onehot(1, 4), neutral_phase, Tc_cws)
+    cws_ok = infer_cws(onehot(1, 4), onehot(1, 5), neutral_phase, Tc_cws)
     agri_ok = compute_agri_risk_probs(met, cws_ok, Ta_agri)
     @assert CROP_STRESS_STATES[argmax(cws_ok)] == "No_Stress" "No_Stress WRSI → cws No_Stress"
     @assert abs((agri_ok[4] + agri_ok[5]) - (met[4] + met[5])) < 0.02 "healthy WRSI must not move risk materially"
@@ -1482,22 +1600,26 @@ function self_test()
 
     # 13. Convergence (Option-2 preview): WRSI+FPAR both stressed escalates
     #     beyond WRSI alone (ASAP level-3 rung).
-    cws_w  = infer_cws(onehot(2, 4), onehot(1, 4), neutral_phase, Tc_cws)  # Mild WRSI only
-    cws_wf = infer_cws(onehot(2, 4), onehot(2, 4), neutral_phase, Tc_cws)  # Mild WRSI + Mild FPAR
+    cws_w  = infer_cws(onehot(2, 4), onehot(1, 5), neutral_phase, Tc_cws)  # Mild WRSI only
+    cws_wf = infer_cws(onehot(2, 4), onehot(3, 5), neutral_phase, Tc_cws)  # Mild WRSI + Mild FPAR
     @assert argmax(cws_wf) > argmax(cws_w) "meteo+veg convergence must escalate"
     @info "Test 13 (WRSI+FPAR convergence):" cws_wrsi_only=CROP_STRESS_STATES[argmax(cws_w)] cws_both=CROP_STRESS_STATES[argmax(cws_wf)]
 
     # 14. Phenology (Option-3 preview): the same deficit at Flowering escalates
     #     vs Vegetative, and is damped at Maturation. Ky-weighted, never
     #     creating stress on its own.
-    cws_veg  = infer_cws(onehot(3, 4), onehot(1, 4), onehot(1, 3), Tc_cws)
-    cws_flow = infer_cws(onehot(3, 4), onehot(1, 4), onehot(2, 3), Tc_cws)
-    cws_mat  = infer_cws(onehot(3, 4), onehot(1, 4), onehot(3, 3), Tc_cws)
-    @assert argmax(cws_flow) > argmax(cws_veg) "Flowering must amplify a deficit"
-    @assert argmax(cws_mat)  < argmax(cws_veg) "Maturation must damp a deficit"
-    cws_healthy_flow = infer_cws(onehot(1, 4), onehot(1, 4), onehot(2, 3), Tc_cws)
+    # Compare on the EXPECTED cws index: a Ky re-weighting can shift the
+    # posterior without crossing a discrete state boundary, which argmax cannot
+    # see.
+    _cwsi(v) = sum(k * v[k] for k in 1:4)
+    cws_veg  = _cwsi(infer_cws(onehot(3, 4), onehot(1, 5), onehot(1, 3), Tc_cws))
+    cws_flow = _cwsi(infer_cws(onehot(3, 4), onehot(1, 5), onehot(2, 3), Tc_cws))
+    cws_mat  = _cwsi(infer_cws(onehot(3, 4), onehot(1, 5), onehot(3, 3), Tc_cws))
+    @assert cws_flow > cws_veg "Flowering must amplify a deficit"
+    @assert cws_mat  < cws_veg "Maturation must damp a deficit"
+    cws_healthy_flow = infer_cws(onehot(1, 4), onehot(1, 5), onehot(2, 3), Tc_cws)
     @assert CROP_STRESS_STATES[argmax(cws_healthy_flow)] == "No_Stress" "phase must not create stress on its own"
-    @info "Test 14 (phenology Ky modifier):" veg=CROP_STRESS_STATES[argmax(cws_veg)] flowering=CROP_STRESS_STATES[argmax(cws_flow)] maturation=CROP_STRESS_STATES[argmax(cws_mat)]
+    @info "Test 14 (phenology Ky modifier — expected cws index):" vegetative=round(cws_veg, digits=2) flowering=round(cws_flow, digits=2) maturation=round(cws_mat, digits=2)
 
     # 16. SHARED-SIGNAL (redundancy) DISCOUNT — wrsi10 is wflow-forced by
     #     *observed* rain, so it shares an origin with cur/cdi on the met branch.
@@ -1518,6 +1640,41 @@ function self_test()
     agri_bound = compute_agri_risk_probs([0.85, 0.15, 0.0, 0.0, 0.0], onehot(4, 4), Ta_agri)
     @assert argmax(agri_bound) < 4 "boundedness must survive the discount"
     @info "Test 17 (guarantees survive discount): identity + bounded OK"
+
+    # 18. ASAP Option 2 — the fpar vegetation axis.
+    #     Cutoffs mirror fpar_prep.py::classify_fpar (−0.5/−1.0/−1.5), and the
+    #     ASAP-critical trigger (z < −1) must land in Moderate ∪ Severe_Decline.
+    @assert categorize_fpar(NaN)  == 1 "missing fpar → Unknown (no-op)"
+    @assert categorize_fpar(0.3)  == 2 "z ≥ −0.5 → Healthy (observed)"
+    @assert categorize_fpar(-0.7) == 3 "−1.0 ≤ z < −0.5 → Mild"
+    @assert categorize_fpar(-1.2) == 4 "−1.5 ≤ z < −1.0 → Moderate"
+    @assert categorize_fpar(-2.0) == 5 "z < −1.5 → Severe_Decline"
+    @assert categorize_fpar("Severe_Decline") == 5 "fpar label round-trips"
+    @assert categorize_fpar(-1.01) >= 4 "ASAP-critical (z < −1) must be Moderate or worse"
+
+    # fpar=Unknown (absent evidence) must be a STRICT no-op: cws rests on wrsi10
+    # alone, reproducing the Option-1 mapping exactly.
+    for w in 1:4
+        cws_unk = infer_cws(onehot(w, 4), onehot(1, 5), neutral_phase, Tc_cws)
+        @assert argmax(cws_unk) == w "fpar=Unknown must leave cws = f(wrsi10) (w=$w)"
+    end
+
+    # ASAP LADDER — the point of Option 2. Identical met; vary the two axes.
+    # L1 meteo-only  : severe water deficit, vegetation OBSERVED healthy
+    # L2 fpar-only   : water fine, vegetation collapsing  (realised impact)
+    # L3 both firing : convergence
+    # ASAP ranks L1 < L2 < L3, and none may collapse into another.
+    _cws_idx(v) = sum(k * v[k] for k in 1:4)          # expected cws index
+    l1 = _cws_idx(infer_cws(onehot(4, 4), onehot(2, 5), neutral_phase, Tc_cws))
+    l2 = _cws_idx(infer_cws(onehot(1, 4), onehot(5, 5), neutral_phase, Tc_cws))
+    l3 = _cws_idx(infer_cws(onehot(4, 4), onehot(5, 5), neutral_phase, Tc_cws))
+    @assert l1 < l2 "ASAP: FPAR-only (L2) must outrank meteo-only (L1) — vegetation is realised impact"
+    @assert l2 < l3 "ASAP: convergence (L3) must outrank either axis alone"
+    # Observed-healthy vegetation must TEMPER a water deficit (that is the whole
+    # content of ASAP L1) — i.e. rank below the same deficit with no veg data.
+    l_unknown = _cws_idx(infer_cws(onehot(4, 4), onehot(1, 5), neutral_phase, Tc_cws))
+    @assert l1 < l_unknown "observed-healthy veg must temper a water deficit vs no veg data"
+    @info "Test 18 (ASAP ladder L1<L2<L3):" L1_meteo_only=round(l1, digits=2) L2_fpar_only=round(l2, digits=2) L3_both=round(l3, digits=2) no_veg_data=round(l_unknown, digits=2)
 
     # ── Risk-cognition ladder + entropy confidence (action node deleted) ──────
     # 15. posterior_confidence: flat ⇒ 0, one-hot ⇒ 1, and it is a statement
@@ -1546,18 +1703,19 @@ function main()
     include_tail_risk = "--tail-risk" in ARGS
     include_cdi = "--cdi" in ARGS
     include_agri = "--agri" in ARGS
+    include_fpar = "--fpar" in ARGS
     cl_str = getarg("--cost-loss-ratio")
     cost_loss_ratio = cl_str === nothing ? 0.2 : parse(Float64, cl_str)
     use_rxinfer = !("--legacy-inference" in ARGS)
 
     if input_csv !== nothing && output_csv !== nothing
         run_csv(input_csv, output_csv; include_agreement, include_tail_risk,
-                include_cdi, include_agri, cost_loss_ratio, use_rxinfer)
+                include_cdi, include_agri, include_fpar, cost_loss_ratio, use_rxinfer)
         return
     end
 
     @info "Drought BN IBF v1 (Julia/RxInfer)"
-    @info "Usage: julia drought_bn_ibf_v1.jl --input-csv IN.csv --output-csv OUT.csv [--no-agreement] [--tail-risk] [--cdi] [--agri] [--legacy-inference] [--cost-loss-ratio 0.2]"
+    @info "Usage: julia drought_bn_ibf_v1.jl --input-csv IN.csv --output-csv OUT.csv [--no-agreement] [--tail-risk] [--cdi] [--agri] [--fpar] [--legacy-inference] [--cost-loss-ratio 0.2]"
     @info "       julia drought_bn_ibf_v1.jl --test"
 
     # Demo: a moderately-stressed boundary

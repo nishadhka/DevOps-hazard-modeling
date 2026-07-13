@@ -155,11 +155,46 @@ neither dilutes nor fabricates the crop signal, and basins with thin crop area
 get soft-gated toward uniform evidence (a BN no-op) — the Bayesian analogue of
 "no warning unless >25 % of active area is hit".
 
-## Still to add (Options 2–4 + flood)
+## `fpar` — vegetation-response node (ASAP Option 2)
 
-- **Option 2** — `fpar` vegetation-response node (ASAP `zFPARc` with the
-  `mFPARd < −10 %·AVG(mFPAR)` guard) + the meteo↔veg convergence rung.
-  `compute_crop_stress_probs(w10, fpar)` already accepts it (self-test 12).
+`fpar_prep.py` builds the independent plant-response axis from the GDO fAPAR
+anomaly (`fpanv`, the `zFPARc` analogue), crop-weighted on the same AFI and
+basins as `wrsi10`. Enable with `--fpar` (requires `--agri`).
+
+**5 states — `Unknown` is explicit:**
+`Unknown | Healthy | Mild | Moderate | Severe_Decline`. "No vegetation evidence"
+and "vegetation observed healthy" are *different propositions*: the first is a
+strict no-op; the second is positive evidence the crop has not yet responded to
+a water deficit (ASAP L1) and **tempers** it.
+
+**The cws rule is graded, not `max()`** — `s = α·w + β·f + γ·min(w,f)` with
+**β > α**, because vegetation is *realised impact* while a water deficit is only
+a precursor. That asymmetry is why ASAP ranks FPAR-only above meteo-only;
+`max()` saturates and collapses the rungs into one.
+
+The ASAP ladder, verified end-to-end on identical met evidence:
+
+| | crop_stress | agri P(High∪Extreme) |
+|---|---|---|
+| L0 neither | No_Stress | **0.350 = met exactly** (no-op) |
+| L1 meteo-only (veg *observed healthy*) | Moderate | 0.582 |
+| L2 fpar-only (veg collapsing) | Moderate | **0.731** — outranks L1 |
+| L3 both firing | Severe | **0.847** |
+
+> ⚠️ **The ASAP `mFPARd` guard is OFF by default.** ASAP counts a pixel critical
+> only when `zFPARc < −1 AND mFPARd < −10%·AVG(mFPAR)` — the second condition
+> suppresses false positives where inter-annual FPAR variability is tiny. It
+> needs *raw* FPAR; the GDO store carries only the anomaly. Pass `--mfpard-nc` +
+> `--mfpar-avg-nc` to switch the exact guard on. Crop weighting mitigates but
+> does not replace it.
+
+> ⚠️ **Build CDI without fAPAR when using `--fpar`.** CDI's Alert classes already
+> require `fAPAR < −1`, so a fAPAR-bearing CDI plus `fpar` counts vegetation
+> twice across the branches. Use `cdi_data_prep.py --fapar-source none`; the BN
+> reads CDI's `fapar_source` and warns loudly if you don't.
+
+## Still to add (Options 3–4 + flood)
+
 - **Option 3** — phenology conditioning (expansion vs senescence).
 - **Option 4** — `tamsat_alert_prep.py` → `wrsi_seas` (schema already pinned).
 - `flood_lik` node — wflow.jl discharge/runoff (wet tail) per basin.

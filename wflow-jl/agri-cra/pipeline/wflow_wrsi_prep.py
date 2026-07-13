@@ -272,7 +272,11 @@ def aggregate(wrsi: np.ndarray, mask: np.ndarray, gdf: gpd.GeoDataFrame,
 
         if vals.size == 0 or (weighted and wts.sum() <= 0):
             med = np.nan; vmin = np.nan
-            fracs = np.full(4, 0.25)          # no (crop) data → uniform = BN no-op
+            # No (crop) data → put the mass on No_Stress, the BN's identity
+            # state for this node. A UNIFORM vector is NOT a no-op here: it
+            # would place 3/4 of the mass on stressed states and escalate the
+            # posterior purely because we lack data.
+            fracs = np.zeros(4); fracs[0] = 1.0
             stress_prob = np.nan
         else:
             med = _weighted_median(vals, wts) if weighted else float(np.median(vals))
@@ -284,11 +288,14 @@ def aggregate(wrsi: np.ndarray, mask: np.ndarray, gdf: gpd.GeoDataFrame,
             fracs = np.array([wts[cls == k].sum() / W for k in (1, 2, 3, 4)],
                              dtype="float64")
             stress_prob = float(wts[vals < STRESS_THRESHOLD].sum() / W)
-            # ASAP CAF>25% soft gate: shrink evidence toward uniform when the
-            # basin's crop area is thin (crop_active < CAF_GATE).
+            # ASAP CAF>25% gate: with little crop area we have little basis for a
+            # *crop* water-stress claim, so the shortfall goes to No_Stress (the
+            # identity state), NOT to a uniform vector — uniform would escalate
+            # the posterior purely because the basin is barely cropped.
             if weighted and np.isfinite(crop_active):
                 strength = min(1.0, crop_active / CAF_GATE)
-                fracs = strength * fracs + (1.0 - strength) * np.full(4, 0.25)
+                fracs = strength * fracs
+                fracs[0] += 1.0 - strength
         b = gdf.iloc[r]
         hid = int(b["HYBAS_ID"]) if "HYBAS_ID" in gdf.columns else r
         pfaf = int(b["PFAF_ID"]) if "PFAF_ID" in gdf.columns else -1
