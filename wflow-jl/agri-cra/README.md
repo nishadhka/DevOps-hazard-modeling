@@ -46,9 +46,16 @@ quickstart. Highlights:
 | ERA5 SPI-3 obs | `cur`, `trn` | live |
 | SEAS5.1 SPI-3 forecast | `def`, `tail`, `agreement` | live |
 | JRC CDI (EADW / recompute) | `cdi` | **live — wired as a BN node** |
-| TAMSAT-ALERT seasonal WRSI | `wrsi_seas` | schema pinned; node wiring next |
-| wflow.jl 10-day WRSI | `wrsi10` | **prep wired** (`pipeline/wflow_wrsi_prep.py`, HydroBASINS L5/L6); awaits Malawi wflow output |
+| TAMSAT-ALERT seasonal WRSI | `wrsi_seas` | schema pinned; node wiring next (ASAP Option 4) |
+| wflow.jl 10-day WRSI | `wrsi10` → `crop_stress` → `agri_risk` | **live** — crop-weighted (ASAP crop AFI, CAF>25%) + fused into the BN via `--agri` (ASAP Option 1). Awaits Malawi wflow output for real MWI values. |
+| ASAP FPAR (`zFPARc`/`mFPARd`) | `fpar` | ASAP Option 2 — planned |
+| Phenology (expansion/senescence) | conditioner | ASAP Option 3 — planned |
 | wflow.jl discharge (flood tail) | `flood_lik` | flood-IBF exists; fold in next |
+
+**ASAP alignment.** `asap/asap-crma-gap-and-bn-role.md` sets the framing (the BN
+is a *fusion layer* over evidence ASAP and others already produce — it makes no
+new pixels) and `asap/asap-crma-implementation-plan.md` is the per-aspect build
+plan (Option 1 done; 2–4 pending).
 
 Next build steps (per the plan): `pipeline/wflow_wrsi_prep.py`
 (ensemble `output_grid_wrsi.nc` → `wrsi10` + `flood_lik`), the basin↔admin-1

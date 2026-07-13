@@ -59,6 +59,19 @@ const TAIL_RISK_STATES    = ["Nil", "Low", "Moderate", "High"]                 #
 const CDI_STATES          = ["No_drought", "Full_recovery", "Partial_recovery",
                              "Watch", "Warning", "Alert"]                       # 6
 const RISK_STATES         = ["Minimal", "Low", "Moderate", "High", "Extreme"]  # 5
+
+# ── Agri-CRMA "divorce-the-parents" layer (ASAP Option 1, Approach B) ─────────
+# The 7-parent met BN above produces `risk` (== met_risk, unchanged). A separate
+# crop-water-stress branch fuses wflow.jl WRSI (wrsi10) — and later FPAR /
+# phenology — into `crop_stress`, then agri_risk = f(met_risk, crop_stress).
+# All monotonic increasing-stress order (idx 1 = least stressed).
+const WRSI10_STATES       = ["No_Stress", "Mild", "Moderate", "Severe"]        # 4
+const FPAR_STATES         = ["No_Stress", "Mild", "Moderate", "Severe"]        # 4 (Option 2)
+const CROP_STRESS_STATES  = ["No_Stress", "Mild", "Moderate", "Severe"]        # 4
+const AGRI_RISK_STATES    = RISK_STATES                                        # 5
+# FAO WRSI class cutoffs (WRSI = 100·ΣAET/ΣPET): >=80 no-stress, 65-80 mild,
+# 50-65 moderate, <50 severe. Mirrors classify_wrsi() in wflow_wrsi_prep.py.
+const WRSI_THRESHOLDS     = (no_stress=80.0, mild=65.0, moderate=50.0)
 const ACTION_STATES       = ["Monitor", "Alert", "Prepare", "Act"]             # 4 (deprecated)
 const CRMA_STATES         = ["Monitor", "Evaluate", "Assess", "Actionable_Risk"] # 4
 const TRAFFIC_LIGHT       = Dict(
@@ -189,6 +202,31 @@ function categorize_cdi(level::AbstractString)::Int
     s == "warning"          && return 5
     s == "alert"            && return 6
     return 1  # unknown / "missing" → No_drought (no effect)
+end
+
+"""
+Categorise a WRSI value (0..150, = 100·ΣAET/ΣPET) into a wrsi10 stress index
+1..4 on FAO bands. Higher index = more crop water stress. NaN/missing → 1
+(No_Stress, a no-op in the agri layer).
+  1 No_Stress (WRSI ≥ 80)   2 Mild (65..80)
+  3 Moderate  (50..65)      4 Severe (< 50)
+"""
+function categorize_wrsi10(wrsi::Real)::Int
+    w = float(wrsi)
+    isnan(w) && return 1
+    w >= WRSI_THRESHOLDS.no_stress && return 1
+    w >= WRSI_THRESHOLDS.mild      && return 2
+    w >= WRSI_THRESHOLDS.moderate  && return 3
+    return 4
+end
+
+function categorize_wrsi10(label::AbstractString)::Int
+    s = lowercase(strip(String(label)))
+    s == "no_stress" && return 1
+    s == "mild"      && return 2
+    s == "moderate"  && return 3
+    s == "severe"    && return 4
+    return 1
 end
 
 # ============================================================================
@@ -627,6 +665,102 @@ end
 onehot(idx::Int, k::Int) = (v = zeros(Float64, k); v[idx] = 1.0; v)
 
 # ============================================================================
+# AGRI LAYER — crop_water_stress + agri_risk (ASAP Option 1, Approach B)
+# ============================================================================
+#
+#   met parents (7) ─► met_risk (== `risk`, unchanged)
+#   wrsi10 [, fpar] ─► crop_stress (4)          [phenology conditions this later]
+#          met_risk ⊕ crop_stress ─► agri_risk (5) ─► CRMA state
+#
+# Kept as a post-fusion layer over the untouched met BN: the met engine still
+# produces `risk`; this layer fuses it with the crop-water-stress branch. All
+# functions are pure and enumerable, so the CPTs are materialised once.
+
+"""
+crop_stress distribution [4] from a wrsi10 state and (optionally, Option 2) an
+fpar state, both 1..4 (1 = no stress). Convergence: when *both* WRSI and FPAR
+indicate stress, escalate one level (the Bayesian analogue of ASAP's meteo+veg
+level-3 rung). For Option 1, fpar defaults to 1 (absent) → crop_stress tracks
+wrsi10.
+"""
+function compute_crop_stress_probs(w10::Int, fpar::Int=1)::Vector{Float64}
+    base = max(w10, fpar)
+    if w10 >= 2 && fpar >= 2
+        base = min(4, base + 1)            # meteo+veg convergence
+    end
+    probs = fill(0.05, 4)
+    probs[base] = 0.70
+    base > 1 && (probs[base - 1] += 0.15)
+    base < 4 && (probs[base + 1] += 0.15)
+    return probs ./ sum(probs)
+end
+
+"""4×4×4 tensor CROP_CPT[crop_stress, wrsi10, fpar]."""
+function build_crop_cpt()::Array{Float64,3}
+    T = zeros(Float64, 4, 4, 4)
+    for fp in 1:4, w in 1:4
+        T[:, w, fp] = compute_crop_stress_probs(w, fp)
+    end
+    return T
+end
+
+"""crop_stress posterior [4] by contracting CROP_CPT with soft evidence."""
+function infer_crop_stress(w10_ev::Vector{Float64}, fpar_ev::Vector{Float64},
+                           Tc::Array{Float64,3})::Vector{Float64}
+    cs = zeros(Float64, 4)
+    @inbounds for fp in 1:4, w in 1:4
+        wt = w10_ev[w] * fpar_ev[fp]
+        for k in 1:4
+            cs[k] += Tc[k, w, fp] * wt
+        end
+    end
+    s = sum(cs); s > 0 && (cs ./= s)
+    return cs
+end
+
+"""
+5-vector for a continuous risk-index `target` ∈ [1,5]: linear interpolation
+between the two bracketing integer states (mass-conserving, monotone). At an
+integer target this is a clean one-hot, so a zero shift makes the agri fusion
+an exact identity on met_risk.
+"""
+function _risk_bump(target::Float64)::Vector{Float64}
+    t = clamp(target, 1.0, 5.0)
+    lo = floor(Int, t); hi = min(lo + 1, 5); frac = t - lo
+    v = zeros(Float64, 5)
+    v[lo] += (1.0 - frac); v[hi] += frac
+    return v
+end
+
+# agri_risk shift (in risk-index units) per crop_stress state: None tempers an
+# over-called met risk (the "crops fine despite the forecast" divergence case);
+# Severe escalates ~1.3 levels. The crop distribution's *expected* shift is
+# applied to the whole met distribution, so a None-dominated crop_stress is a
+# near-identity (no spurious escalation from soft-evidence leakage).
+const _CROP_SHIFT = (-0.30, 0.30, 0.80, 1.30)
+
+"""
+agri_risk posterior [5] = Σ_m met[m]·_risk_bump(m + E), where E =
+Σ_c crop[c]·_CROP_SHIFT[c] is the crop-stress expected escalation (risk-index
+units). crop None → E ≲ 0 → agri ≈ met (tempered if met is over-called);
+crop Severe → E ≈ +1 → agri escalated toward High/Extreme.
+"""
+function compute_agri_risk_probs(met_probs::Vector{Float64},
+                                 crop_probs::Vector{Float64})::Vector{Float64}
+    esc = 0.0
+    @inbounds for c in 1:4
+        esc += crop_probs[c] * _CROP_SHIFT[c]
+    end
+    agri = zeros(Float64, 5)
+    @inbounds for m in 1:5
+        met_probs[m] > 0 || continue
+        agri .+= met_probs[m] .* _risk_bump(float(m) + esc)
+    end
+    s = sum(agri); s > 0 && (agri ./= s)
+    return agri
+end
+
+# ============================================================================
 # BOUNDARY PROCESSING
 # ============================================================================
 
@@ -1004,7 +1138,7 @@ end
 
 function run_csv(input_csv::String, output_csv::String;
                  include_agreement::Bool, include_tail_risk::Bool,
-                 include_cdi::Bool=false,
+                 include_cdi::Bool=false, include_agri::Bool=false,
                  cost_loss_ratio::Float64=0.2, use_rxinfer::Bool=true)
     df = CSV.read(input_csv, DataFrames.DataFrame)
     colnames = names(df)
@@ -1012,6 +1146,16 @@ function run_csv(input_csv::String, output_csv::String;
     if include_tail_risk && !has_min
         @warn "--tail-risk requested but ens_min_spi column missing; disabling"
         include_tail_risk = false
+    end
+    # Agri layer (Approach B): wrsi10 crop-water-stress node from wflow_wrsi_prep.py,
+    # merged on `id`. Prefer soft w10_p1..p4, else wrsi10_value/wrsi10_class.
+    has_w10_soft = all("w10_p$i" in colnames for i in 1:4)
+    has_w10_val  = "wrsi10_value" in colnames
+    has_w10_cls  = "wrsi10_class" in colnames
+    has_w10 = has_w10_soft || has_w10_val || has_w10_cls
+    if include_agri && !has_w10
+        @warn "--agri requested but no w10_p*/wrsi10_value/wrsi10_class columns; disabling"
+        include_agri = false
     end
     # CDI evidence node — from the sidecar produced by cdi_data_prep.py, merged
     # onto the prep CSV on `id`. Prefer the integer level, fall back to the
@@ -1029,7 +1173,8 @@ function run_csv(input_csv::String, output_csv::String;
     # no obs pixel hits): replace with NaN / sentinels so the categorise_*
     # functions take their NaN branch.
     _f(x) = (x === missing || x === nothing) ? NaN : Float64(x)
-    _s(x) = (x === missing || x === nothing) ? "" : String(x)
+    # string() not String(): tolerate integer id/name columns (e.g. HYBAS_ID).
+    _s(x) = (x === missing || x === nothing) ? "" : string(x)
     _soft(prefix::String, k::Int, row) = all("$(prefix)_p$i" in colnames for i in 1:k) ?
         [_f(row["$(prefix)_p$i"]) for i in 1:k] : nothing
 
@@ -1098,14 +1243,48 @@ function run_csv(input_csv::String, output_csv::String;
         out.cdi_level = [CDI_STATES[b.cdi_level_idx] for b in inputs]
     end
 
+    # ── Agri fusion layer: agri_risk = f(met_risk, crop_stress(wrsi10)) ──────
+    # results[i] ↔ df row i (inputs built in df order; process preserves order).
+    if include_agri
+        Tc = build_crop_cpt()
+        _w10_idx(row) = has_w10_val ? categorize_wrsi10(_f(row.wrsi10_value)) :
+                        has_w10_cls ? categorize_wrsi10(_s(row.wrsi10_class)) : 1
+        rows = collect(DataFrames.eachrow(df))
+        # Preserve the met-only CRMA before overwriting the primary columns.
+        out.crma_state_met    = copy(out.crma_state)
+        out.traffic_light_met = copy(out.traffic_light)
+        crop_lvl = Vector{String}(undef, length(results))
+        agri = [zeros(Float64, 5) for _ in results]
+        for (i, r) in enumerate(results)
+            row = rows[i]
+            w10_ev = something(_soft("w10", 4, row), onehot(_w10_idx(row), 4))
+            fpar_ev = onehot(1, 4)                    # Option 2 will supply real FPAR
+            crop = infer_crop_stress(w10_ev, fpar_ev, Tc)
+            crop_lvl[i] = CROP_STRESS_STATES[argmax(crop)]
+            agri[i] = compute_agri_risk_probs(r.risk_probabilities, crop)
+        end
+        out.crop_stress    = crop_lvl
+        out.agri_minimal   = [a[1] for a in agri]
+        out.agri_low       = [a[2] for a in agri]
+        out.agri_moderate  = [a[3] for a in agri]
+        out.agri_high      = [a[4] for a in agri]
+        out.agri_extreme   = [a[5] for a in agri]
+        out.agri_risk_level = [AGRI_RISK_STATES[argmax(a)] for a in agri]
+        # Primary CRMA now reflects agri_risk (met kept in *_met columns).
+        crma = [compute_crma_state(a; cost_loss_ratio) for a in agri]
+        out.crma_state    = [CRMA_STATES[c[1]] for c in crma]
+        out.traffic_light = [TRAFFIC_LIGHT[CRMA_STATES[c[1]]] for c in crma]
+        out.crma_explanation = ["agri: " * c[2] for c in crma]
+    end
+
     mkpath(dirname(abspath(output_csv)))
     CSV.write(output_csv, out)
     @info "Wrote $output_csv rows=$(DataFrames.nrow(out))"
 
     risk_counts = DataFrames.combine(DataFrames.groupby(out, :risk_level), DataFrames.nrow => :n)
-    @info "Risk distribution:" risk_counts
+    @info "Risk distribution (met):" risk_counts
     crma_counts = DataFrames.combine(DataFrames.groupby(out, :crma_state), DataFrames.nrow => :n)
-    @info "CRMA state distribution:" crma_counts
+    @info "CRMA state distribution$(include_agri ? " (agri)" : ""):" crma_counts
 end
 
 # ============================================================================
@@ -1177,6 +1356,36 @@ function self_test()
     @assert maximum(abs.(rp_mm .- rp_dir)) < 1e-10 "CDI matmul must match direct CPT"
     @info "Test 8 (CDI matmul == direct):" d=maximum(abs.(rp_mm .- rp_dir))
 
+    # ── Agri layer (Approach B: crop_water_stress + agri_risk) ──────────────
+    Tc_crop = build_crop_cpt()
+    met = [0.05, 0.15, 0.45, 0.25, 0.10]   # a Moderate-ish met_risk posterior
+
+    # 9. wrsi10 No_Stress (crop_stress None) → agri ≈ met, no escalation.
+    cs_none = infer_crop_stress(onehot(1, 4), onehot(1, 4), Tc_crop)
+    agri_none = compute_agri_risk_probs(met, cs_none)
+    @assert CROP_STRESS_STATES[argmax(cs_none)] == "No_Stress" "No_Stress WRSI → crop No_Stress"
+    @assert (agri_none[4] + agri_none[5]) <= (met[4] + met[5]) + 1e-9 "No crop stress must not escalate"
+    @info "Test 9 (wrsi10 No_Stress ≈ met):" met_HE=(met[4]+met[5]) agri_HE=(agri_none[4]+agri_none[5])
+
+    # 10. wrsi10 Severe escalates agri_risk above met_risk.
+    cs_sev = infer_crop_stress(onehot(4, 4), onehot(1, 4), Tc_crop)
+    agri_sev = compute_agri_risk_probs(met, cs_sev)
+    @assert (agri_sev[4] + agri_sev[5]) > (met[4] + met[5]) "Severe WRSI must escalate P(High∪Extreme)"
+    @info "Test 10 (wrsi10 Severe escalates):" agri_HE=(agri_sev[4]+agri_sev[5]) met_HE=(met[4]+met[5])
+
+    # 11. Divergence: met Extreme + crop None → agri tempered below met.
+    met_ext = [0.0, 0.0, 0.05, 0.25, 0.70]
+    agri_div = compute_agri_risk_probs(met_ext, cs_none)
+    @assert agri_div[5] < met_ext[5] "met-Extreme + crop-None should temper Extreme mass"
+    @info "Test 11 (divergence tempers):" met_extreme=met_ext[5] agri_extreme=agri_div[5]
+
+    # 12. Convergence (Option-2 preview): WRSI+FPAR both stressed escalates one
+    #     level beyond WRSI alone.
+    cs_w = infer_crop_stress(onehot(2, 4), onehot(1, 4), Tc_crop)   # Mild WRSI only
+    cs_wf = infer_crop_stress(onehot(2, 4), onehot(2, 4), Tc_crop)  # Mild WRSI + Mild FPAR
+    @assert argmax(cs_wf) >= argmax(cs_w) "meteo+veg convergence must not de-escalate"
+    @info "Test 12 (WRSI+FPAR convergence):" crop_wrsi_only=CROP_STRESS_STATES[argmax(cs_w)] crop_both=CROP_STRESS_STATES[argmax(cs_wf)]
+
     @info "All self-tests passed."
 end
 
@@ -1191,18 +1400,19 @@ function main()
     include_agreement = !("--no-agreement" in ARGS)
     include_tail_risk = "--tail-risk" in ARGS
     include_cdi = "--cdi" in ARGS
+    include_agri = "--agri" in ARGS
     cl_str = getarg("--cost-loss-ratio")
     cost_loss_ratio = cl_str === nothing ? 0.2 : parse(Float64, cl_str)
     use_rxinfer = !("--legacy-inference" in ARGS)
 
     if input_csv !== nothing && output_csv !== nothing
         run_csv(input_csv, output_csv; include_agreement, include_tail_risk,
-                include_cdi, cost_loss_ratio, use_rxinfer)
+                include_cdi, include_agri, cost_loss_ratio, use_rxinfer)
         return
     end
 
     @info "Drought BN IBF v1 (Julia/RxInfer)"
-    @info "Usage: julia drought_bn_ibf_v1.jl --input-csv IN.csv --output-csv OUT.csv [--no-agreement] [--tail-risk] [--cdi] [--legacy-inference] [--cost-loss-ratio 0.2]"
+    @info "Usage: julia drought_bn_ibf_v1.jl --input-csv IN.csv --output-csv OUT.csv [--no-agreement] [--tail-risk] [--cdi] [--agri] [--legacy-inference] [--cost-loss-ratio 0.2]"
     @info "       julia drought_bn_ibf_v1.jl --test"
 
     # Demo: a moderately-stressed boundary

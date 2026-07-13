@@ -1,0 +1,178 @@
+<mxfile host="app.diagrams.net" modified="2026-07-11T00:00:00.000Z" agent="claude-code" version="24.0.0">
+  <diagram id="agri-cra-pipeline" name="agri-CRMA pipeline">
+    <mxGraphModel dx="1600" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1900" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- TITLE -->
+        <mxCell id="title" value="agri-CRMA pipeline — data inputs → wflow.jl + TAMSAT-ALERT → admin-1⇄HydroBASINS crosswalk → Bayesian network (Approach B) → CRMA risk-state decision support + verification" style="text;html=1;fontSize=15;fontStyle=1;align=left;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="40" y="12" width="1500" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- STAGE CONTAINERS -->
+        <mxCell id="col1" value="1 · EXTERNAL DATA SOURCES" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#6c8ebf;dashed=1;verticalAlign=top;fontSize=13;fontStyle=1;fontColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="40" y="60" width="230" height="760" as="geometry" />
+        </mxCell>
+        <mxCell id="col2" value="2 · wflow.jl HYDROLOGICAL ENGINE (dry + wet tail)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#82b366;dashed=1;verticalAlign=top;fontSize=13;fontStyle=1;fontColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="290" y="60" width="250" height="760" as="geometry" />
+        </mxCell>
+        <mxCell id="col3" value="3 · DATA-PREP / INGESTION (workflow)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#d79b00;dashed=1;verticalAlign=top;fontSize=13;fontStyle=1;fontColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="560" y="60" width="250" height="760" as="geometry" />
+        </mxCell>
+        <mxCell id="col4" value="4 · admin-1 ⇄ HydroBASINS L5/L6 CROSSWALK" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#d6b656;dashed=1;verticalAlign=top;fontSize=13;fontStyle=1;fontColor=#b09500;" vertex="1" parent="1">
+          <mxGeometry x="830" y="60" width="230" height="760" as="geometry" />
+        </mxCell>
+        <mxCell id="col5" value="5 · BN EVIDENCE NODES" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#9673a6;dashed=1;verticalAlign=top;fontSize=13;fontStyle=1;fontColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="60" width="220" height="760" as="geometry" />
+        </mxCell>
+        <mxCell id="col6" value="6 · BN ENGINE — Approach B (divorce-the-parents)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#b85450;dashed=1;verticalAlign=top;fontSize=13;fontStyle=1;fontColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="1320" y="60" width="290" height="760" as="geometry" />
+        </mxCell>
+        <mxCell id="col7" value="7 · CRMA RISK STATE → DECISION SUPPORT + EPISTEMIC VERIFICATION" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#666666;dashed=1;verticalAlign=top;fontSize=12;fontStyle=1;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1630" y="60" width="250" height="760" as="geometry" />
+        </mxCell>
+
+        <!-- COL 1 : DATA SOURCES -->
+        <mxCell id="s1" value="ERA5 reanalysis&#10;(precip, temp)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1"><mxGeometry x="50" y="100" width="210" height="46" as="geometry" /></mxCell>
+        <mxCell id="s2" value="SEAS5.1 ECMWF seasonal&#10;ensemble (51 members)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1"><mxGeometry x="50" y="160" width="210" height="46" as="geometry" /></mxCell>
+        <mxCell id="s3" value="CHIRPS / IMERG rainfall" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1"><mxGeometry x="50" y="220" width="210" height="40" as="geometry" /></mxCell>
+        <mxCell id="s4" value="JRC CDI&#10;(Combined Drought Indicator)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1"><mxGeometry x="50" y="274" width="210" height="46" as="geometry" /></mxCell>
+        <mxCell id="s5" value="TAMSAT-ALERT API v2&#10;(seasonal WRSI forecast)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1"><mxGeometry x="50" y="334" width="210" height="46" as="geometry" /></mxCell>
+        <mxCell id="s6" value="ASAP FPAR&#10;(zFPARc, mFPARd)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1"><mxGeometry x="50" y="394" width="210" height="46" as="geometry" /></mxCell>
+        <mxCell id="s7" value="ASAP cropland Area-Fraction&#10;Image (500 m %crop)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1"><mxGeometry x="50" y="454" width="210" height="46" as="geometry" /></mxCell>
+        <mxCell id="s8" value="Planting-window /&#10;degree-day tables" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1"><mxGeometry x="50" y="514" width="210" height="46" as="geometry" /></mxCell>
+        <mxCell id="s9" value="HydroBASINS Africa&#10;L5 / L6 shapefiles" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1"><mxGeometry x="50" y="574" width="210" height="46" as="geometry" /></mxCell>
+        <mxCell id="s10" value="GAUL admin-1 boundaries" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1"><mxGeometry x="50" y="634" width="210" height="40" as="geometry" /></mxCell>
+
+        <!-- COL 2 : wflow.jl -->
+        <mxCell id="w0" value="build_v4_forcing.py&#10;→ forcing.nc (precip, PET, temp)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1"><mxGeometry x="300" y="120" width="230" height="52" as="geometry" /></mxCell>
+        <mxCell id="w1" value="wflow static maps&#10;(staticmaps.nc, LDD, river network)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1"><mxGeometry x="300" y="200" width="230" height="52" as="geometry" /></mxCell>
+        <mxCell id="w2" value="wflow.jl run&#10;(wflow_sbm, Julia)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#b9d9b1;strokeColor=#82b366;fontSize=12;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="300" y="290" width="230" height="60" as="geometry" /></mxCell>
+        <mxCell id="w3" value="output_grid_wrsi.nc&#10;(daily aet, pet) → dry tail" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1"><mxGeometry x="300" y="390" width="230" height="52" as="geometry" /></mxCell>
+        <mxCell id="w4" value="discharge / river output&#10;(flood wet tail)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1"><mxGeometry x="300" y="470" width="230" height="52" as="geometry" /></mxCell>
+
+        <!-- COL 3 : PREP -->
+        <mxCell id="p1" value="drought_data_prep.py&#10;→ SPI obs + SEAS5 forecast&#10;(cur, def, spa, trn, agr, tail)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1"><mxGeometry x="570" y="100" width="230" height="60" as="geometry" /></mxCell>
+        <mxCell id="p2" value="cdi_data_prep.py&#10;→ CDI evidence  [LIVE]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1"><mxGeometry x="570" y="180" width="230" height="48" as="geometry" /></mxCell>
+        <mxCell id="p3" value="wflow_wrsi_prep.py&#10;→ wrsi10 (crop-fraction weighted)&#10;[prep wired · Opt 1]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1"><mxGeometry x="570" y="248" width="230" height="60" as="geometry" /></mxCell>
+        <mxCell id="p4" value="tamsat_alert_prep.py&#10;→ wrsi_seas  [TO BUILD]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;dashed=1;" vertex="1" parent="1"><mxGeometry x="570" y="328" width="230" height="48" as="geometry" /></mxCell>
+        <mxCell id="p5" value="fpar_prep.py&#10;→ fpar  [TO BUILD · Opt 2]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;dashed=1;" vertex="1" parent="1"><mxGeometry x="570" y="396" width="230" height="48" as="geometry" /></mxCell>
+        <mxCell id="p6" value="phenology_tracker.py&#10;→ phase  [TO BUILD · Opt 3]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;dashed=1;" vertex="1" parent="1"><mxGeometry x="570" y="464" width="230" height="48" as="geometry" /></mxCell>
+        <mxCell id="p7" value="flood evidence prep&#10;→ flood_lik  [NEXT]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;dashed=1;" vertex="1" parent="1"><mxGeometry x="570" y="532" width="230" height="48" as="geometry" /></mxCell>
+
+        <!-- COL 4 : CROSSWALK -->
+        <mxCell id="x1" value="admin-1 ⇄ HydroBASINS&#10;L5 / L6 crosswalk&#10;(HYBAS_ID ↔ GAUL admin-1)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="840" y="250" width="210" height="72" as="geometry" /></mxCell>
+        <mxCell id="x1b" value="cropland-fraction weights&#10;per basin ↔ admin-1&#10;(ASAP CAF &gt; 25% active area)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1"><mxGeometry x="840" y="360" width="210" height="66" as="geometry" /></mxCell>
+        <mxCell id="x1c" value="rasterise basins → zonal WRSI&#10;(L5 country-scale / L6 sub-basin)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1"><mxGeometry x="840" y="460" width="210" height="60" as="geometry" /></mxCell>
+
+        <!-- COL 5 : NODES -->
+        <mxCell id="hd_meteo" value="Meteo parents → risk" style="text;html=1;fontSize=11;fontStyle=2;align=left;fontColor=#9673a6;" vertex="1" parent="1"><mxGeometry x="1090" y="82" width="200" height="18" as="geometry" /></mxCell>
+        <mxCell id="n1" value="cur · current_spi3 (5)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1"><mxGeometry x="1090" y="102" width="200" height="30" as="geometry" /></mxCell>
+        <mxCell id="n2" value="def · deficit (5)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1"><mxGeometry x="1090" y="136" width="200" height="30" as="geometry" /></mxCell>
+        <mxCell id="n3" value="spa · spatial (3)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1"><mxGeometry x="1090" y="170" width="200" height="30" as="geometry" /></mxCell>
+        <mxCell id="n4" value="trn · trend (3)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1"><mxGeometry x="1090" y="204" width="200" height="30" as="geometry" /></mxCell>
+        <mxCell id="n5" value="agr · agreement (3)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1"><mxGeometry x="1090" y="238" width="200" height="30" as="geometry" /></mxCell>
+        <mxCell id="n6" value="tail · ens-min SPI (4)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1"><mxGeometry x="1090" y="272" width="200" height="30" as="geometry" /></mxCell>
+        <mxCell id="n7" value="cdi · JRC CDI (6)  [LIVE]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1"><mxGeometry x="1090" y="306" width="200" height="30" as="geometry" /></mxCell>
+        <mxCell id="hd_crop" value="Crop parents → crop_water_stress" style="text;html=1;fontSize=11;fontStyle=2;align=left;fontColor=#9673a6;" vertex="1" parent="1"><mxGeometry x="1090" y="346" width="200" height="18" as="geometry" /></mxCell>
+        <mxCell id="n8" value="wrsi10 (4)  [Opt 1]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;dashed=1;" vertex="1" parent="1"><mxGeometry x="1090" y="366" width="200" height="30" as="geometry" /></mxCell>
+        <mxCell id="n9" value="fpar (4)  [Opt 2]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;dashed=1;" vertex="1" parent="1"><mxGeometry x="1090" y="400" width="200" height="30" as="geometry" /></mxCell>
+        <mxCell id="n10" value="phase (3)  [Opt 3]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;dashed=1;" vertex="1" parent="1"><mxGeometry x="1090" y="434" width="200" height="30" as="geometry" /></mxCell>
+        <mxCell id="hd_seas" value="Seasonal strategic prior" style="text;html=1;fontSize=11;fontStyle=2;align=left;fontColor=#9673a6;" vertex="1" parent="1"><mxGeometry x="1090" y="474" width="200" height="18" as="geometry" /></mxCell>
+        <mxCell id="n11" value="wrsi_seas · TAMSAT-ALERT&#10;(monthly)  [schema pinned]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;dashed=1;" vertex="1" parent="1"><mxGeometry x="1090" y="494" width="200" height="40" as="geometry" /></mxCell>
+
+        <!-- COL 6 : ENGINE -->
+        <mxCell id="e1" value="risk&#10;meteo posterior (5 states)&#10;≤5 parents · RxInfer/matmul" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="1340" y="140" width="250" height="66" as="geometry" /></mxCell>
+        <mxCell id="e3" value="agri_risk&#10;fused posterior (5 states)&#10;= f(risk, crop_water_stress)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4a9a6;strokeColor=#b85450;fontSize=12;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="1340" y="340" width="250" height="70" as="geometry" /></mxCell>
+        <mxCell id="e2" value="crop_water_stress&#10;(4 states)&#10;= f(wrsi10, fpar, phase)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;fontStyle=1;dashed=1;" vertex="1" parent="1"><mxGeometry x="1340" y="500" width="250" height="66" as="geometry" /></mxCell>
+        <mxCell id="enote" value="Approach B: intermediate crop node keeps every node ≤5 parents (RxInfer exact cap). Sum rule + product rule + MaxEnt CPTs + Dirichlet learning. Calibratable target proposition, e.g. P(≥N cropland/people affected in b within horizon). NO action node — action stays with national DRM." style="text;html=1;fontSize=10;fontStyle=2;align=left;fontColor=#b85450;" vertex="1" parent="1"><mxGeometry x="1340" y="596" width="250" height="110" as="geometry" /></mxCell>
+
+        <!-- COL 7 : CRMA -->
+        <mxCell id="c1" value="CRMA risk state  (risk cognition)&#10;Monitor · Evaluate · Assess · Review&#10;🟢  🟡  🟠  🔴   — all modal verbs&#10;states of concern, NOT actions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#666666;fontSize=11;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="1640" y="190" width="230" height="84" as="geometry" /></mxCell>
+        <mxCell id="c2" value="Triage gate: deeper analysis&#10;(hazard / impact model) runs only at ≥ Assess" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;" vertex="1" parent="1"><mxGeometry x="1640" y="292" width="230" height="52" as="geometry" /></mxCell>
+        <mxCell id="c3" value="Decision-support bulletin&#10;risk state + auditable evidence trail&#10;(farmer / insurer framings — not a prescription)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;" vertex="1" parent="1"><mxGeometry x="1640" y="360" width="230" height="60" as="geometry" /></mxCell>
+        <mxCell id="c4" value="Institutional boundary&#10;CRMA owns risk state ·&#10;national DRM owns action state" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;" vertex="1" parent="1"><mxGeometry x="1640" y="436" width="230" height="58" as="geometry" /></mxCell>
+        <mxCell id="c5" value="Epistemic verification — non-3D flight simulator&#10;replay past events → score risk-STATE transitions:&#10;calibration / Brier · hit-rate · false-alarm ratio ·&#10;lead-time · modal ranking · evidence value" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8eef7;strokeColor=#4a6fa5;fontSize=10;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="1640" y="510" width="230" height="96" as="geometry" /></mxCell>
+
+        <!-- LEGEND -->
+        <mxCell id="legend" value="LEGEND   solid = live/wired · dashed = to build/planned · Opt 1 crop-fraction crosswalk · Opt 2 FPAR node · Opt 3 phenology gating&#10;CRMA is a risk-COGNITION / triage layer (Monitor·Evaluate·Assess·Review), NOT an action prescriber — it sits ABOVE Hazard Watch evidence, does not replace it. Epistemic verification (not decision verification): was the risk STATE justified given the evidence available at that time?" style="text;html=1;fontSize=11;align=left;verticalAlign=middle;strokeColor=#b3b3b3;fillColor=#fbfbfb;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="836" width="1570" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- EDGES : sources → wflow -->
+        <mxCell id="e_s1w0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#555555;" edge="1" parent="1" source="s1" target="w0"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s3w0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#555555;" edge="1" parent="1" source="s3" target="w0"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_w0w2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#555555;" edge="1" parent="1" source="w0" target="w2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_w1w2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#555555;" edge="1" parent="1" source="w1" target="w2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_w2w3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#555555;" edge="1" parent="1" source="w2" target="w3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_w2w4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#555555;" edge="1" parent="1" source="w2" target="w4"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- EDGES : sources → prep -->
+        <mxCell id="e_s1p1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#555555;" edge="1" parent="1" source="s1" target="p1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s2p1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#555555;" edge="1" parent="1" source="s2" target="p1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s4p2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#555555;" edge="1" parent="1" source="s4" target="p2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s5p4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#555555;" edge="1" parent="1" source="s5" target="p4"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s6p5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#555555;" edge="1" parent="1" source="s6" target="p5"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s7p3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#555555;" edge="1" parent="1" source="s7" target="p3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s8p6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#555555;" edge="1" parent="1" source="s8" target="p6"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- EDGES : wflow out → prep -->
+        <mxCell id="e_w3p3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#555555;" edge="1" parent="1" source="w3" target="p3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_w4p7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#555555;" edge="1" parent="1" source="w4" target="p7"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- EDGES : sources → crosswalk -->
+        <mxCell id="e_s9x1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b09500;" edge="1" parent="1" source="s9" target="x1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s10x1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b09500;" edge="1" parent="1" source="s10" target="x1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s7x1b" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b09500;" edge="1" parent="1" source="s7" target="x1b"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- EDGES : prep (basin-keyed) → crosswalk -->
+        <mxCell id="e_p3x1c" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b09500;" edge="1" parent="1" source="p3" target="x1c"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_x1cx1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b09500;" edge="1" parent="1" source="x1c" target="x1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_x1bx1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b09500;" edge="1" parent="1" source="x1b" target="x1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- EDGES : crosswalk → wrsi10 node -->
+        <mxCell id="e_x1n8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b09500;" edge="1" parent="1" source="x1" target="n8"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- EDGES : prep (admin-1 keyed) → nodes -->
+        <mxCell id="e_p1n1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="p1" target="n1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_p1n2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="p1" target="n2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_p1n3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="p1" target="n3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_p1n4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="p1" target="n4"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_p1n5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="p1" target="n5"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_p1n6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="p1" target="n6"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_p2n7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="p2" target="n7"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_p4n11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673a6;dashed=1;" edge="1" parent="1" source="p4" target="n11"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_p5n9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673a6;dashed=1;" edge="1" parent="1" source="p5" target="n9"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_p6n10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673a6;dashed=1;" edge="1" parent="1" source="p6" target="n10"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- EDGES : nodes → engine -->
+        <mxCell id="e_n1e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b85450;" edge="1" parent="1" source="n1" target="e1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_n2e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b85450;" edge="1" parent="1" source="n2" target="e1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_n3e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b85450;" edge="1" parent="1" source="n3" target="e1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_n4e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b85450;" edge="1" parent="1" source="n4" target="e1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_n5e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b85450;" edge="1" parent="1" source="n5" target="e1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_n6e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b85450;" edge="1" parent="1" source="n6" target="e1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_n7e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b85450;" edge="1" parent="1" source="n7" target="e1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_n8e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b85450;dashed=1;" edge="1" parent="1" source="n8" target="e2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_n9e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b85450;dashed=1;" edge="1" parent="1" source="n9" target="e2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_n10e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b85450;dashed=1;" edge="1" parent="1" source="n10" target="e2"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- EDGES : fusion -->
+        <mxCell id="e_e1e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b85450;strokeWidth=2;" edge="1" parent="1" source="e1" target="e3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_e2e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b85450;strokeWidth=2;dashed=1;" edge="1" parent="1" source="e2" target="e3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_n11e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673a6;dashed=1;" edge="1" parent="1" source="n11" target="e3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_p7e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#d79b00;dashed=1;" edge="1" parent="1" source="p7" target="e3"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- EDGES : engine → CRMA -->
+        <mxCell id="e_e3c1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;strokeWidth=2;" edge="1" parent="1" source="e3" target="c1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_c1c2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;" edge="1" parent="1" source="c1" target="c2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_c2c3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;" edge="1" parent="1" source="c2" target="c3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_c1c4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;" edge="1" parent="1" source="c1" target="c4"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_c1c5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;" edge="1" parent="1" source="c1" target="c5"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_c5e3" value="CPT learning + calibration (closed loop)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4a6fa5;dashed=1;fontSize=9;" edge="1" parent="1" source="c5" target="e3"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

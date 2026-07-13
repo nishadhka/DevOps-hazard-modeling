@@ -48,13 +48,24 @@ julia --project=. drought_bn_ibf_v1.jl \
 # 4. Pin the TAMSAT-ALERT WRSI schema (before wiring wrsi_seas)
 uv run tamsat_alert_probe.py --year 2026 --month 01
 
-# 5. Build the wflow.jl wrsi10 node (Malawi, HydroBASINS level 6) once the
-#    wflow run has written output/output_grid_wrsi.nc:
+# 5. Build the wflow.jl wrsi10 node (Malawi, HydroBASINS level 6), crop-weighted
+#    by the ASAP crop AFI (Option 1). Once the wflow run has written
+#    output/output_grid_wrsi.nc:
 uv run wflow_wrsi_prep.py \
     --wrsi-nc /mnt/wflow-secondary/v4_models/mwi/output/output_grid_wrsi.nc \
-    --level 6 --mode dekadal --out bn_inputs/wrsi10_mwi_2026-07.csv
+    --level 6 --mode dekadal \
+    --crop-afi /mnt/wflow-data/asap/asap_mask_crop_v04.tif \
+    --out bn_inputs/wrsi10_mwi_2026-07.csv
 # → one row per Malawi level-6 sub-basin (9 within the level-5 anchor),
-#   keyed on id=HYBAS_ID, columns wrsi10_value/class/min/stress_prob + w10_p1..p4
+#   id=HYBAS_ID, crop_active_frac + wrsi10_value/class/min/stress_prob + w10_p1..p4
+
+# 6. Merge wrsi10 onto the met evidence CSV (on id) and run the BN with the
+#    agri layer (Approach B): agri_risk = f(met_risk, crop_water_stress(wrsi10)).
+julia --project=. drought_bn_ibf_v1.jl \
+    --input-csv bn_inputs/merged_2026-07.csv \
+    --output-csv output/agri_bn_2026-07.csv --tail-risk --cdi --agri
+# → adds crop_stress, agri_risk_*, agri_risk_level; primary crma_state now
+#   reflects agri_risk, with crma_state_met kept alongside for comparison.
 ```
 
 ## CDI evidence node
@@ -80,14 +91,41 @@ soft evidence (a BN no-op). Verified on the rwa case; launch-ready for Malawi
 once its wflow output exists (`/mnt/wflow-secondary/v4_models/mwi/output/` is
 currently empty; the model has `forcing_s2s.nc` for the 10-day forecast).
 
-## Still to add (flood + TAMSAT sides)
+## Agri layer — `crop_water_stress` + `agri_risk` (ASAP Option 1, Approach B)
 
+The met BN (7 parents → `risk`) is untouched and becomes `met_risk`. A separate
+crop-water-stress branch fuses wflow.jl WRSI into the posterior:
+
+```
+met parents (7) ─► met_risk (5)
+        wrsi10  ─► crop_stress (4)        [+ fpar (Option 2), phenology (Option 3)]
+   met_risk ⊕ crop_stress ─► agri_risk (5) ─► CRMA state
+```
+
+`agri_risk = Σ_m met[m]·bump(m + E)` where `E = Σ_c crop[c]·shift[c]` is the
+crop-stress expected escalation (shift = −0.3/+0.3/+0.8/+1.3 for
+No_Stress/Mild/Moderate/Severe). No crop stress → `E ≲ 0` → agri ≈ met (and
+*tempers* an over-called met risk — the "forecast says drought but the crops are
+fine" divergence case). Severe crop stress → escalates toward High/Extreme.
+Enabled with `--agri`; absent wrsi10 columns → disabled, behaviour unchanged.
+
+**ASAP mechanism #1 (CAF > 25 %) is implemented in the prep**: WRSI is reduced
+**crop-fraction-weighted** using the ASAP 500 m crop AFI, so rangeland/bare area
+neither dilutes nor fabricates the crop signal, and basins with thin crop area
+get soft-gated toward uniform evidence (a BN no-op) — the Bayesian analogue of
+"no warning unless >25 % of active area is hit".
+
+## Still to add (Options 2–4 + flood)
+
+- **Option 2** — `fpar` vegetation-response node (ASAP `zFPARc` with the
+  `mFPARd < −10 %·AVG(mFPAR)` guard) + the meteo↔veg convergence rung.
+  `compute_crop_stress_probs(w10, fpar)` already accepts it (self-test 12).
+- **Option 3** — phenology conditioning (expansion vs senescence).
+- **Option 4** — `tamsat_alert_prep.py` → `wrsi_seas` (schema already pinned).
 - `flood_lik` node — wflow.jl discharge/runoff (wet tail) per basin.
 - Ensemble WRSI — per-member `wrsi10` once multi-member S2S forcing is run
   (current `forcing_s2s.nc` is a single trace).
-- `tamsat_alert_prep.py` — run/ingest TAMSAT-ALERT_API_V2 → `wrsi_seas` (schema
-  already pinned by `tamsat_alert_probe.py`).
-- BN `crop_water_stress` / `agri_risk` branches (see `../wrsi_bn_integration_plan.md`).
+See `../asap/asap-crma-implementation-plan.md`.
 
 ## Provenance
 
