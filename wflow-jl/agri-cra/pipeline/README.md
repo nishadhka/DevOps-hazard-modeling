@@ -94,20 +94,43 @@ currently empty; the model has `forcing_s2s.nc` for the 10-day forecast).
 ## Agri layer — `crop_water_stress` + `agri_risk` (ASAP Option 1, Approach B)
 
 The met BN (7 parents → `risk`) is untouched and becomes `met_risk`. A separate
-crop-water-stress branch fuses wflow.jl WRSI into the posterior:
+crop-water-stress branch fuses wflow.jl WRSI into the posterior — the
+parent-divorcing structure specified in
+`../asap/bn-approach-b-crop-stress-subbranch.md`:
 
 ```
-met parents (7) ─► met_risk (5)
-        wrsi10  ─► crop_stress (4)        [+ fpar (Option 2), phenology (Option 3)]
-   met_risk ⊕ crop_stress ─► agri_risk (5) ─► CRMA state
+met parents (7) ─────────────► met_risk (5)
+wrsi10, fpar, phase ─► cws (4)      │
+   (crop_water_stress)              │
+              └── met_risk ⊕ cws ─► agri_risk (5) ─► CRMA state
 ```
 
-`agri_risk = Σ_m met[m]·bump(m + E)` where `E = Σ_c crop[c]·shift[c]` is the
-crop-stress expected escalation (shift = −0.3/+0.3/+0.8/+1.3 for
-No_Stress/Mild/Moderate/Severe). No crop stress → `E ≲ 0` → agri ≈ met (and
-*tempers* an over-called met risk — the "forecast says drought but the crops are
-fine" divergence case). Severe crop stress → escalates toward High/Extreme.
+Fusion is the **sum rule**, not a heuristic:
+
+```
+P(agri_risk) = Σ_{m,c} P(agri_risk | risk=m, cws=c) · P(risk=m) · P(cws=c)
+```
+
+over `AGRI_CPT[agri, risk, cws]` (5×[5·4] = 100 entries); `cws` comes from
+`CWS_CPT[cws, wrsi10, fpar, phase]` (4×[4·4·3] = 192 entries). Both node
+in-degrees stay inside RxInfer's 5-parent exact cap (`cws` 3, `agri_risk` 2).
+
+Two guarantees:
+- **No-op:** `cws = No_Stress` ⇒ `agri_risk == risk` **exactly**
+  (`_CWS_SHIFT[1] = 0.0`) — the same guarantee as `cdi=1` / `tail=1`.
+- **Bounded:** `cws = Severe` alone cannot lift a Minimal met state to
+  High/Extreme (no single-index basis risk).
+
 Enabled with `--agri`; absent wrsi10 columns → disabled, behaviour unchanged.
+Adds `crop_stress`, `agri_risk_*`, `agri_risk_level`; CRMA then runs on
+`agri_risk`, with `crma_state_met` / `confidence_met` kept alongside.
+
+> ⚠️ **Known limitation.** `wrsi10` is wflow-derived from *observed* rainfall, so
+> it shares an origin with `cur` (ERA5 SPI-3) and the precipitation term inside
+> `cdi` — which sit on the met branch. They meet at `agri_risk` under a monotone
+> upward push, so one missing-rain signal can escalate the posterior twice. Fix
+> belongs in `AGRI_CPT` (correlation-aware fusion column, or a shared latent
+> observed-rainfall-deficit node).
 
 **ASAP mechanism #1 (CAF > 25 %) is implemented in the prep**: WRSI is reduced
 **crop-fraction-weighted** using the ASAP 500 m crop AFI, so rangeland/bare area

@@ -87,19 +87,48 @@ options, decided per node:
 
 ## Option 1 — Cropland-fraction crosswalk + wire `wrsi10` as a BN node
 
-> **✅ DONE (2026-07-12).** Built under Approach B. `wflow_wrsi_prep.py` now
-> crop-weights WRSI with the ASAP crop AFI (`/mnt/wflow-data/asap/
-> asap_mask_crop_v04.tif`, EPSG:4326 500 m, value = crop % 0-100 — verified
-> against Iowa/Punjab; **no ×0.5 scaling in v04**), emits `crop_active_frac` +
-> crop-weighted `wrsi10_*` / `w10_p*`, and applies the CAF>25 % soft gate.
-> `drought_bn_ibf_v1.jl` gained `categorize_wrsi10`, `compute_crop_stress_probs`,
-> `infer_crop_stress`, `compute_agri_risk_probs` and the `--agri` flag; the met
-> BN is untouched (`risk` == `met_risk`), CRMA now runs on `agri_risk` with
-> `crma_state_met` kept alongside. 12/12 self-tests pass (9-12 are the agri
-> layer). Verified on `runs/rwa_wrsi`: crop weighting moves basin WRSI (e.g.
-> 96.7 flat → 88.4 crop-weighted) and, with identical met evidence,
-> `agri_risk_level` escalates Moderate→High→Extreme as wrsi10 goes
-> No_Stress→Severe.
+> **✅ DONE (2026-07-13).** Built under Approach B, conforming to
+> `bn-approach-b-crop-stress-subbranch.md` (the authoritative node spec).
+>
+> **Prep** — `wflow_wrsi_prep.py` crop-weights WRSI with the ASAP crop AFI
+> (`/mnt/wflow-data/asap/asap_mask_crop_v04.tif`, EPSG:4326 500 m, value =
+> crop % 0-100 — verified against Iowa/Punjab; **no ×0.5 scaling in v04**),
+> emits `crop_active_frac` + crop-weighted `wrsi10_*` / `w10_p*`, and applies
+> the CAF>25 % soft evidence-strength gate.
+>
+> **BN** — `crop_water_stress` (cws) + `agri_risk` per spec §3:
+> * `compute_cws_probs(wrsi10, fpar, phase)` → 4-vector; `build_cws_cpt()` is
+>   the 4×[4·4·3] = **192-entry** CPT. The ASAP-L3 convergence rung and the
+>   FAO-33 `Ky` phenology modifier (Flowering amplifies / Maturation damps,
+>   never creates stress) are pre-wired for Options 2–3.
+> * `build_agri_cpt()` → 5×[5·4] = **100-entry** `AGRI_CPT[agri, risk, cws]`.
+>   Fusion is the **sum rule** `Σ_{m,c} P(agri|risk,cws)·P(risk)·P(cws)`
+>   (spec §5.1) — *not* an expected-shift heuristic.
+> * **No-op guarantee (§3.2):** `cws = No_Stress` ⇒ `agri_risk == risk`
+>   **exactly** (`_CWS_SHIFT[1] = 0.0`), mirroring the `cdi=1` / `tail=1`
+>   guarantees. **Bounded (§3.2):** `cws = Severe` alone cannot lift a Minimal
+>   met state to High/Extreme (no single-index basis risk).
+> * In-degree stays inside RxInfer's 5-parent exact cap: `cws` has 3 parents,
+>   `agri_risk` has 2.
+>
+> `--agri` flag adds `crop_stress`, `agri_risk_*`, `agri_risk_level`; CRMA runs
+> on `agri_risk` with `crma_state_met` / `confidence_met` kept alongside.
+> **15/15 self-tests pass** (9–14 agri; 15 entropy-confidence + verb-only
+> ladder). `run_csv` driven end-to-end (`--tail-risk --cdi --agri`): no
+> `action_*` columns, `crma_state ∈ {Monitor,Evaluate,Assess,Review}`.
+> Verified on `runs/rwa_wrsi`: crop weighting moves basin WRSI (96.7 flat →
+> 88.4 crop-weighted where cropland is patchy); with identical met evidence,
+> `agri_risk_level` escalates Moderate→Extreme as wrsi10 goes No_Stress→Severe.
+>
+> ⚠️ **Known limitation shipped with this option** — `wrsi10` is wflow-derived
+> from **observed** rainfall, so it shares an origin with `cur` (ERA5 SPI-3) and
+> the precipitation term inside `cdi`. Those sit on the met branch, `wrsi10` on
+> the crop branch, and they meet at `agri_risk` where `_CWS_SHIFT` applies a
+> monotone upward push ⇒ **one missing-rain signal can escalate the posterior
+> twice**. Approach B localises this to the 100-entry `AGRI_CPT`, which is where
+> to fix it (correlation-aware fusion column, or a shared latent
+> "observed rainfall deficit" node). Tracked as the top outstanding modelling
+> correction.
 
 **ASAP mechanism #1 (CAF > 25 %).** Anomalies counted only on active crop area;
 warn when > 25 % of *active* area is anomalous. **Dependency: FIRST** — it

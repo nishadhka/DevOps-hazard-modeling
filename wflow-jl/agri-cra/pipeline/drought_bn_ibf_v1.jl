@@ -66,19 +66,26 @@ const RISK_STATES         = ["Minimal", "Low", "Moderate", "High", "Extreme"]  #
 # phenology — into `crop_stress`, then agri_risk = f(met_risk, crop_stress).
 # All monotonic increasing-stress order (idx 1 = least stressed).
 const WRSI10_STATES       = ["No_Stress", "Mild", "Moderate", "Severe"]        # 4
-const FPAR_STATES         = ["No_Stress", "Mild", "Moderate", "Severe"]        # 4 (Option 2)
-const CROP_STRESS_STATES  = ["No_Stress", "Mild", "Moderate", "Severe"]        # 4
+const FPAR_STATES         = ["Healthy", "Mild", "Moderate", "Severe_Decline"]  # 4 (Option 2)
+# phase is a Ky *modifier*, not a stress axis (Option 3).
+const PHASE_STATES        = ["Vegetative", "Flowering", "Maturation"]          # 3
+const CROP_STRESS_STATES  = ["No_Stress", "Mild", "Moderate", "Severe"]        # 4 (cws)
 const AGRI_RISK_STATES    = RISK_STATES                                        # 5
 # FAO WRSI class cutoffs (WRSI = 100·ΣAET/ΣPET): >=80 no-stress, 65-80 mild,
 # 50-65 moderate, <50 severe. Mirrors classify_wrsi() in wflow_wrsi_prep.py.
 const WRSI_THRESHOLDS     = (no_stress=80.0, mild=65.0, moderate=50.0)
-const ACTION_STATES       = ["Monitor", "Alert", "Prepare", "Act"]             # 4 (deprecated)
-const CRMA_STATES         = ["Monitor", "Evaluate", "Assess", "Actionable_Risk"] # 4
+# CRMA risk-COGNITION ladder. All four are analytical/attention states, not
+# actions: the system says how much scrutiny a unit warrants, never what to do.
+# `Review` (was `Actionable_Risk`) = "escalate for senior/organisational review;
+# this can no longer be handled as routine monitoring" — it is the TOP of the
+# ladder. The action state (No_Action/Preparedness/Standby/Activation) belongs
+# to national DRM, not to this engine; there is deliberately no action node.
+const CRMA_STATES         = ["Monitor", "Evaluate", "Assess", "Review"]        # 4
 const TRAFFIC_LIGHT       = Dict(
-    "Monitor"         => "Green",
-    "Evaluate"        => "Yellow",
-    "Assess"          => "Orange",
-    "Actionable_Risk" => "Red",
+    "Monitor"  => "Green",
+    "Evaluate" => "Yellow",
+    "Assess"   => "Orange",
+    "Review"   => "Red",
 )
 
 # Drought thresholds. SPI is unitless; cutoffs follow McKee (1993) /
@@ -233,6 +240,33 @@ end
 # CRMA DECISION (cost-loss-ratio rule, identical to flood)
 # ============================================================================
 
+"""
+Sharpness of a posterior: 1 − H/H_max ∈ [0,1] (H_max = log k for k states).
+
+This replaces the old `confidence = maximum(action_probs)`, which was derived
+from the deleted action node. Entropy is the epistemically honest measure: a
+flat posterior (we know nothing) scores 0 regardless of which state happens to
+edge ahead, and only a genuinely peaked belief scores near 1. It is a statement
+about the *quality of the belief*, which is exactly what CRMA is accountable
+for.
+"""
+function posterior_confidence(probs::Vector{Float64})::Float64
+    k = length(probs)
+    k <= 1 && return 1.0
+    s = sum(probs)
+    s > 0 || return 0.0
+    p = probs ./ s
+    H = -sum(x * log(max(x, 1e-12)) for x in p)
+    return clamp(1.0 - H / log(k), 0.0, 1.0)
+end
+
+"""
+Cost-loss rule → CRMA risk state (index 1..4 = Monitor/Evaluate/Assess/Review).
+
+The rule is retained deliberately: cost-loss here selects an **analytical
+posture** (how much scrutiny/compute this unit warrants), NOT a humanitarian
+action. `Review` is the top rung — escalate for organisational review.
+"""
 function compute_crma_state(risk_probs::Vector{Float64};
                             cost_loss_ratio::Float64=0.2)
     p_minimal  = risk_probs[1]
@@ -241,16 +275,16 @@ function compute_crma_state(risk_probs::Vector{Float64};
     p_high     = risk_probs[4]
     p_extreme  = risk_probs[5]
 
-    p_act      = p_high + p_extreme
+    p_review   = p_high + p_extreme
     p_assess   = p_moderate + p_high + p_extreme
     p_evaluate = p_low + p_moderate + p_high + p_extreme
 
-    θ_act      = cost_loss_ratio
+    θ_review   = cost_loss_ratio
     θ_assess   = max(2.0 * cost_loss_ratio, 0.40)
     θ_evaluate = max(3.0 * cost_loss_ratio, 0.30)
 
-    if p_act >= θ_act
-        expl = "P(High∪Extreme)=$(round(p_act, digits=2)) ≥ C/L=$(round(θ_act, digits=2))"
+    if p_review >= θ_review
+        expl = "P(High∪Extreme)=$(round(p_review, digits=2)) ≥ C/L=$(round(θ_review, digits=2))"
         return 4, expl
     elseif p_assess >= θ_assess
         expl = "P(Mod∪High∪Extreme)=$(round(p_assess, digits=2)) ≥ $(round(θ_assess, digits=2))"
@@ -469,14 +503,12 @@ function build_risk_cpt_tensor(; include_tail_risk::Bool=true, include_cdi::Bool
     end
 end
 
-function build_action_cpt()::Matrix{Float64}
-    return [
-        0.95  0.15  0.00  0.00  0.00;  # Monitor
-        0.05  0.80  0.20  0.05  0.00;  # Alert
-        0.00  0.05  0.75  0.25  0.05;  # Prepare
-        0.00  0.00  0.05  0.70  0.95;  # Act
-    ]
-end
+# NOTE: the action node (build_action_cpt / ACTION_STATES) was REMOVED.
+# Actions are not random variables in the same sense as rainfall or crop stress,
+# and an action node inside the BN misleadingly implies the engine prescribes a
+# response. The BN estimates probabilities; the cost-loss decision layer
+# (compute_crma_state) maps them to an analytical posture; real-world action
+# remains with national DRM. See asap/crma-epistemic-curatorial-evaluation.md.
 
 # ============================================================================
 # RxInfer MODEL
@@ -534,9 +566,8 @@ function infer_rxinfer_soft(
     trn_ev::Vector{Float64};
     tail_ev::Union{Nothing,Vector{Float64}}=nothing,
     risk_cpt_tensor::AbstractArray{Float64},
-    action_cpt::Matrix{Float64},
     iterations::Int=10,
-)::Tuple{Vector{Float64},Vector{Float64}}
+)::Vector{Float64}
     if tail_ev === nothing
         r = infer(
             model = drought_bn_model_4parent(T = risk_cpt_tensor),
@@ -554,9 +585,7 @@ function infer_rxinfer_soft(
             initialization = _rxinfer_init_5,
         )
     end
-    risk_probs   = Vector{Float64}(last(r.posteriors[:risk]).p)
-    action_probs = action_cpt * risk_probs
-    return risk_probs, action_probs
+    return Vector{Float64}(last(r.posteriors[:risk]).p)
 end
 
 # ============================================================================
@@ -599,10 +628,10 @@ end
 
 function infer_direct(
     cur_idx::Int, def_idx::Int, spa_idx::Int, trn_idx::Int, agr_idx::Int,
-    risk_cpt::Matrix{Float64}, action_cpt::Matrix{Float64};
+    risk_cpt::Matrix{Float64};
     include_agreement::Bool=true,
     tail_risk_idx::Int=1, include_tail_risk::Bool=false,
-)
+)::Vector{Float64}
     parent_idx = if include_agreement
         encode_parents(cur_idx, def_idx, spa_idx, trn_idx, agr_idx;
                         tail=tail_risk_idx, include_tail_risk)
@@ -610,9 +639,7 @@ function infer_direct(
         encode_parents_no_agreement(cur_idx, def_idx, spa_idx, trn_idx;
                                      tail=tail_risk_idx, include_tail_risk)
     end
-    risk_probs = risk_cpt[:, parent_idx]
-    action_probs = action_cpt * risk_probs
-    return risk_probs, action_probs
+    return risk_cpt[:, parent_idx]
 end
 
 """
@@ -624,8 +651,7 @@ function infer_soft_matmul(
     spa_ev::Vector{Float64}, trn_ev::Vector{Float64},
     tail_ev::Vector{Float64},
     T::Array{Float64},
-    action_cpt::Matrix{Float64},
-)::Tuple{Vector{Float64},Vector{Float64}}
+)::Vector{Float64}
     risk_probs = zeros(Float64, 5)
     @inbounds for tl in 1:4, tr in 1:3, sp in 1:3, df in 1:5, cu in 1:5
         w = cur_ev[cu] * def_ev[df] * spa_ev[sp] * trn_ev[tr] * tail_ev[tl]
@@ -635,7 +661,7 @@ function infer_soft_matmul(
     end
     s = sum(risk_probs)
     if s > 0; risk_probs ./= s; end
-    return risk_probs, action_cpt * risk_probs
+    return risk_probs
 end
 
 """
@@ -648,8 +674,7 @@ function infer_soft_matmul_cdi(
     spa_ev::Vector{Float64}, trn_ev::Vector{Float64},
     tail_ev::Vector{Float64}, cdi_ev::Vector{Float64},
     T::Array{Float64},
-    action_cpt::Matrix{Float64},
-)::Tuple{Vector{Float64},Vector{Float64}}
+)::Vector{Float64}
     risk_probs = zeros(Float64, 5)
     @inbounds for cd in 1:6, tl in 1:4, tr in 1:3, sp in 1:3, df in 1:5, cu in 1:5
         w = cur_ev[cu] * def_ev[df] * spa_ev[sp] * trn_ev[tr] * tail_ev[tl] * cdi_ev[cd]
@@ -659,7 +684,7 @@ function infer_soft_matmul_cdi(
     end
     s = sum(risk_probs)
     if s > 0; risk_probs ./= s; end
-    return risk_probs, action_cpt * risk_probs
+    return risk_probs
 end
 
 onehot(idx::Int, k::Int) = (v = zeros(Float64, k); v[idx] = 1.0; v)
@@ -677,52 +702,72 @@ onehot(idx::Int, k::Int) = (v = zeros(Float64, k); v[idx] = 1.0; v)
 # functions are pure and enumerable, so the CPTs are materialised once.
 
 """
-crop_stress distribution [4] from a wrsi10 state and (optionally, Option 2) an
-fpar state, both 1..4 (1 = no stress). Convergence: when *both* WRSI and FPAR
-indicate stress, escalate one level (the Bayesian analogue of ASAP's meteo+veg
-level-3 rung). For Option 1, fpar defaults to 1 (absent) → crop_stress tracks
-wrsi10.
+crop_water_stress (cws) distribution [4] given the three crop-branch parents,
+per bn-approach-b-crop-stress-subbranch.md §3.1:
+
+  wrsi10 1..4  No_Stress→Severe   (wflow.jl WRSI, crop-fraction-weighted; Opt 1)
+  fpar   1..4  Healthy→Severe     (ASAP zFPARc guarded by mFPARd;        Opt 2)
+  phase  1..3  Vegetative/Flowering/Maturation  (Ky modifier, NOT stress; Opt 3)
+
+  • Base: monotone in wrsi10 and fpar.
+  • Convergence rule (ASAP level-3 analogue): wrsi10 AND fpar both stressed
+    escalates harder than either alone.
+  • Phenology (FAO-33 Ky) modifier: Flowering amplifies a given deficit
+    (irreversible loss); Maturation damps it. Never creates stress on its own.
+
+Defaults (fpar=1, phase=1) make cws track wrsi10 — the Option-1 configuration.
 """
-function compute_crop_stress_probs(w10::Int, fpar::Int=1)::Vector{Float64}
+function compute_cws_probs(w10::Int, fpar::Int=1, phase::Int=1)::Vector{Float64}
     base = max(w10, fpar)
     if w10 >= 2 && fpar >= 2
-        base = min(4, base + 1)            # meteo+veg convergence
+        base = min(4, base + 1)            # meteo+veg convergence (ASAP L3)
     end
-    probs = fill(0.05, 4)
-    probs[base] = 0.70
-    base > 1 && (probs[base - 1] += 0.15)
-    base < 4 && (probs[base + 1] += 0.15)
+    if base >= 2                            # phenology re-weights real stress only
+        phase == 2 && (base = min(4, base + 1))   # Flowering  → amplify
+        phase == 3 && (base = max(1, base - 1))   # Maturation → damp
+    end
+    # Peaked, lightly MaxEnt-smoothed. Kept tight at base=1 so "no stress on any
+    # axis" does not manufacture crop-stress mass out of smoothing alone.
+    probs = fill(0.01, 4)
+    probs[base] = 0.94
+    base > 1 && (probs[base - 1] += 0.02)
+    base < 4 && (probs[base + 1] += 0.02)
     return probs ./ sum(probs)
 end
 
-"""4×4×4 tensor CROP_CPT[crop_stress, wrsi10, fpar]."""
-function build_crop_cpt()::Array{Float64,3}
-    T = zeros(Float64, 4, 4, 4)
-    for fp in 1:4, w in 1:4
-        T[:, w, fp] = compute_crop_stress_probs(w, fp)
+"""4×4×4×3 tensor CWS_CPT[cws, wrsi10, fpar, phase] — 192 entries (§3.1)."""
+function build_cws_cpt()::Array{Float64,4}
+    T = zeros(Float64, 4, 4, 4, 3)
+    for ph in 1:3, fp in 1:4, w in 1:4
+        T[:, w, fp, ph] = compute_cws_probs(w, fp, ph)
     end
     return T
 end
 
-"""crop_stress posterior [4] by contracting CROP_CPT with soft evidence."""
-function infer_crop_stress(w10_ev::Vector{Float64}, fpar_ev::Vector{Float64},
-                           Tc::Array{Float64,3})::Vector{Float64}
-    cs = zeros(Float64, 4)
-    @inbounds for fp in 1:4, w in 1:4
-        wt = w10_ev[w] * fpar_ev[fp]
+"""
+cws posterior [4] = Σ_{w,f,p} P(cws | w,f,p)·P(w)·P(f)·P(p) — the sum rule over
+the crop branch (Jaynes §5.1), implemented as a tensor contraction exactly like
+the met-side infer_soft_matmul.
+"""
+function infer_cws(w10_ev::Vector{Float64}, fpar_ev::Vector{Float64},
+                   phase_ev::Vector{Float64}, T::Array{Float64,4})::Vector{Float64}
+    cws = zeros(Float64, 4)
+    @inbounds for ph in 1:3, fp in 1:4, w in 1:4
+        wt = w10_ev[w] * fpar_ev[fp] * phase_ev[ph]
+        wt > 0 || continue
         for k in 1:4
-            cs[k] += Tc[k, w, fp] * wt
+            cws[k] += T[k, w, fp, ph] * wt
         end
     end
-    s = sum(cs); s > 0 && (cs ./= s)
-    return cs
+    s = sum(cws); s > 0 && (cws ./= s)
+    return cws
 end
 
 """
 5-vector for a continuous risk-index `target` ∈ [1,5]: linear interpolation
 between the two bracketing integer states (mass-conserving, monotone). At an
-integer target this is a clean one-hot, so a zero shift makes the agri fusion
-an exact identity on met_risk.
+integer target this is a clean one-hot — which is what makes the cws=No_Stress
+column of AGRI_CPT an exact identity.
 """
 function _risk_bump(target::Float64)::Vector{Float64}
     t = clamp(target, 1.0, 5.0)
@@ -732,29 +777,38 @@ function _risk_bump(target::Float64)::Vector{Float64}
     return v
 end
 
-# agri_risk shift (in risk-index units) per crop_stress state: None tempers an
-# over-called met risk (the "crops fine despite the forecast" divergence case);
-# Severe escalates ~1.3 levels. The crop distribution's *expected* shift is
-# applied to the whole met distribution, so a None-dominated crop_stress is a
-# near-identity (no spurious escalation from soft-evidence leakage).
-const _CROP_SHIFT = (-0.30, 0.30, 0.80, 1.30)
+# Upward shift (risk-index units) that each cws state applies to met_risk.
+# cws=No_Stress ⇒ 0.0 ⇒ EXACT identity pass-through (the backward-compat no-op
+# guarantee, §3.2 — mirrors the cdi=1 / tail=1 guarantees). Bounded: from a
+# Minimal met state even cws=Severe reaches only ~2.5 (Low/Moderate), so the
+# crop branch alone cannot manufacture Extreme without meteo corroboration.
+const _CWS_SHIFT = (0.0, 0.4, 0.9, 1.5)
+
+"""5×5×4 tensor AGRI_CPT[agri_risk, risk, cws] — 100 entries (§3.2).
+Column cws=1 is the identity: AGRI_CPT[:, m, 1] == onehot(m)."""
+function build_agri_cpt()::Array{Float64,3}
+    T = zeros(Float64, 5, 5, 4)
+    for c in 1:4, m in 1:5
+        T[:, m, c] = _risk_bump(float(m) + _CWS_SHIFT[c])
+    end
+    return T
+end
 
 """
-agri_risk posterior [5] = Σ_m met[m]·_risk_bump(m + E), where E =
-Σ_c crop[c]·_CROP_SHIFT[c] is the crop-stress expected escalation (risk-index
-units). crop None → E ≲ 0 → agri ≈ met (tempered if met is over-called);
-crop Severe → E ≈ +1 → agri escalated toward High/Extreme.
+agri_risk posterior [5] = Σ_{m,c} P(agri | risk=m, cws=c)·P(risk=m)·P(cws=c)
+— the sum rule over the two branches (Jaynes §5.1). With cws hard No_Stress
+this returns met_probs exactly.
 """
 function compute_agri_risk_probs(met_probs::Vector{Float64},
-                                 crop_probs::Vector{Float64})::Vector{Float64}
-    esc = 0.0
-    @inbounds for c in 1:4
-        esc += crop_probs[c] * _CROP_SHIFT[c]
-    end
+                                 cws_probs::Vector{Float64},
+                                 Ta::Array{Float64,3})::Vector{Float64}
     agri = zeros(Float64, 5)
-    @inbounds for m in 1:5
-        met_probs[m] > 0 || continue
-        agri .+= met_probs[m] .* _risk_bump(float(m) + esc)
+    @inbounds for c in 1:4, m in 1:5
+        wt = met_probs[m] * cws_probs[c]
+        wt > 0 || continue
+        for k in 1:5
+            agri[k] += Ta[k, m, c] * wt
+        end
     end
     s = sum(agri); s > 0 && (agri ./= s)
     return agri
@@ -795,16 +849,14 @@ struct BoundaryResult
     spi3_trend::String
     risk_level::String
     risk_probabilities::Vector{Float64}
-    recommended_action::String         # deprecated
-    action_probabilities::Vector{Float64}
-    confidence::Float64
+    confidence::Float64                # sharpness of the posterior, 1 − H/H_max
     crma_state::String
     crma_explanation::String
     traffic_light::String
 end
 
 function _assemble_result(b::BoundaryInput, cur_idx::Int, trn_idx::Int,
-                          risk_probs::Vector{Float64}, action_probs::Vector{Float64},
+                          risk_probs::Vector{Float64},
                           cost_loss_ratio::Float64)::BoundaryResult
     crma_idx, crma_expl = compute_crma_state(risk_probs; cost_loss_ratio)
     crma_state = CRMA_STATES[crma_idx]
@@ -814,15 +866,13 @@ function _assemble_result(b::BoundaryInput, cur_idx::Int, trn_idx::Int,
         TREND_STATES[trn_idx],
         RISK_STATES[argmax(risk_probs)],
         risk_probs,
-        ACTION_STATES[argmax(action_probs)],
-        action_probs,
-        maximum(action_probs),
+        posterior_confidence(risk_probs),
         crma_state, crma_expl, TRAFFIC_LIGHT[crma_state],
     )
 end
 
 function process_boundary(
-    b::BoundaryInput, risk_cpt::Matrix{Float64}, action_cpt::Matrix{Float64};
+    b::BoundaryInput, risk_cpt::Matrix{Float64};
     include_agreement::Bool=true, include_tail_risk::Bool=false,
     cost_loss_ratio::Float64=0.2,
 )::BoundaryResult
@@ -833,18 +883,17 @@ function process_boundary(
     agr_idx = categorize_agreement(b.forecast_agreement)
     tl_idx  = categorize_tail_risk(b.ens_min_spi)
 
-    risk_probs, action_probs = infer_direct(
+    risk_probs = infer_direct(
         cur_idx, def_idx, spa_idx, trn_idx, agr_idx,
-        risk_cpt, action_cpt;
+        risk_cpt;
         include_agreement, tail_risk_idx=tl_idx, include_tail_risk,
     )
 
-    return _assemble_result(b, cur_idx, trn_idx, risk_probs, action_probs, cost_loss_ratio)
+    return _assemble_result(b, cur_idx, trn_idx, risk_probs, cost_loss_ratio)
 end
 
 function process_boundary_rxinfer(
-    b::BoundaryInput, risk_cpt_tensor::AbstractArray{Float64},
-    action_cpt::Matrix{Float64};
+    b::BoundaryInput, risk_cpt_tensor::AbstractArray{Float64};
     include_tail_risk::Bool=false,
     cost_loss_ratio::Float64=0.2, iterations::Int=10,
 )::BoundaryResult
@@ -862,14 +911,13 @@ function process_boundary_rxinfer(
               (b.tail_probs === nothing ? onehot(tl_idx, 4) : b.tail_probs) :
               nothing
 
-    risk_probs, action_probs = infer_rxinfer_soft(
+    risk_probs = infer_rxinfer_soft(
         cur_ev, def_ev, spa_ev, trn_ev;
         tail_ev = tail_ev,
         risk_cpt_tensor = risk_cpt_tensor,
-        action_cpt = action_cpt,
         iterations = iterations,
     )
-    return _assemble_result(b, cur_idx, trn_idx, risk_probs, action_probs, cost_loss_ratio)
+    return _assemble_result(b, cur_idx, trn_idx, risk_probs, cost_loss_ratio)
 end
 
 """
@@ -880,8 +928,7 @@ used for any parent whose `*_probs` field is populated, else a one-hot from
 the categorised index.
 """
 function process_boundary_cdi(
-    b::BoundaryInput, risk_cpt_tensor::AbstractArray{Float64},
-    action_cpt::Matrix{Float64};
+    b::BoundaryInput, risk_cpt_tensor::AbstractArray{Float64};
     cost_loss_ratio::Float64=0.2,
 )::BoundaryResult
     cur_idx = categorize_current_spi3(b.current_spi3)
@@ -898,10 +945,10 @@ function process_boundary_cdi(
     tail_ev = b.tail_probs === nothing ? onehot(tl_idx, 4)  : b.tail_probs
     cdi_ev  = b.cdi_probs  === nothing ? onehot(cd_idx, 6)  : b.cdi_probs
 
-    risk_probs, action_probs = infer_soft_matmul_cdi(
+    risk_probs = infer_soft_matmul_cdi(
         cur_ev, def_ev, spa_ev, trn_ev, tail_ev, cdi_ev,
-        risk_cpt_tensor, action_cpt)
-    return _assemble_result(b, cur_idx, trn_idx, risk_probs, action_probs, cost_loss_ratio)
+        risk_cpt_tensor)
+    return _assemble_result(b, cur_idx, trn_idx, risk_probs, cost_loss_ratio)
 end
 
 function process_all_boundaries(
@@ -910,20 +957,19 @@ function process_all_boundaries(
     include_cdi::Bool=false,
     cost_loss_ratio::Float64=0.2, use_rxinfer::Bool=true,
 )::Vector{BoundaryResult}
-    action_cpt = build_action_cpt()
     results = Vector{BoundaryResult}(undef, length(boundaries))
 
     if include_cdi
         # CDI adds a 6th conditioning parent → matmul over the 7-D tensor.
         T = build_risk_cpt_tensor(; include_cdi=true)
         for (i, b) in enumerate(boundaries)
-            results[i] = process_boundary_cdi(b, T, action_cpt; cost_loss_ratio)
+            results[i] = process_boundary_cdi(b, T; cost_loss_ratio)
             i % 50 == 0 && @info "Processed $i/$(length(boundaries)) boundaries (CDI matmul)"
         end
     elseif use_rxinfer && !include_agreement
         T = build_risk_cpt_tensor(; include_tail_risk)
         for (i, b) in enumerate(boundaries)
-            results[i] = process_boundary_rxinfer(b, T, action_cpt;
+            results[i] = process_boundary_rxinfer(b, T;
                                                   include_tail_risk, cost_loss_ratio)
             i % 50 == 0 && @info "Processed $i/$(length(boundaries)) boundaries (RxInfer)"
         end
@@ -933,7 +979,7 @@ function process_all_boundaries(
         end
         risk_cpt, _ = build_risk_cpt(; include_agreement, include_tail_risk)
         for (i, b) in enumerate(boundaries)
-            results[i] = process_boundary(b, risk_cpt, action_cpt;
+            results[i] = process_boundary(b, risk_cpt;
                                           include_agreement, include_tail_risk, cost_loss_ratio)
             i % 50 == 0 && @info "Processed $i/$(length(boundaries)) boundaries (matmul)"
         end
@@ -962,7 +1008,6 @@ function run_dbn_sequence(
     temporal_decay::Float64=0.6, lookback::Int=6,
 )
     T = build_risk_cpt_tensor(; include_tail_risk)
-    action_cpt = build_action_cpt()
     prev = Dict{String, Vector{Float64}}()
     chain_len = Dict{String, Int}()
     all_frames = DataFrames.DataFrame[]
@@ -1000,14 +1045,13 @@ function run_dbn_sequence(
             risk_ev = (yesterday !== nothing && cl < lookback) ?
                       blend_temporal_prior(yesterday; decay=temporal_decay) : nothing
 
-            risk_probs, action_probs = infer_soft_matmul(
-                cur_ev, def_ev, spa_ev, trn_ev, tail_ev, T, action_cpt)
+            risk_probs = infer_soft_matmul(
+                cur_ev, def_ev, spa_ev, trn_ev, tail_ev, T)
 
             if risk_ev !== nothing
                 risk_probs .*= risk_ev
                 s = sum(risk_probs)
                 if s > 0; risk_probs ./= s; end
-                action_probs = action_cpt * risk_probs
             end
 
             prev[bid] = copy(risk_probs)
@@ -1049,7 +1093,6 @@ function run_per_member_bn(
 )
     df = CSV.read(member_csv, DataFrames.DataFrame)
     T = build_risk_cpt_tensor(; include_tail_risk)
-    action_cpt = build_action_cpt()
     colnames = names(df)
     _soft(prefix, k, row) = all("$(prefix)_p$i" in colnames for i in 1:k) ?
         Float64[row["$(prefix)_p$i"] for i in 1:k] : nothing
@@ -1070,8 +1113,8 @@ function run_per_member_bn(
         trn_ev  = something(_soft("trn",  3, row), onehot(trn_idx, 3))
         tail_ev = something(_soft("tail", 4, row), onehot(tl_idx, 4))
 
-        risk_probs, _ = infer_soft_matmul(
-            cur_ev, def_ev, spa_ev, trn_ev, tail_ev, T, action_cpt)
+        risk_probs = infer_soft_matmul(
+            cur_ev, def_ev, spa_ev, trn_ev, tail_ev, T)
         crma_idx, _ = compute_crma_state(risk_probs; cost_loss_ratio)
 
         out[i] = (
@@ -1226,17 +1269,12 @@ function run_csv(input_csv::String, output_csv::String;
         crma_state            = [r.crma_state for r in results],
         traffic_light         = [r.traffic_light for r in results],
         crma_explanation      = [r.crma_explanation for r in results],
-        recommended_action    = [r.recommended_action for r in results],
         confidence            = [r.confidence for r in results],
         risk_minimal          = [r.risk_probabilities[1] for r in results],
         risk_low              = [r.risk_probabilities[2] for r in results],
         risk_moderate         = [r.risk_probabilities[3] for r in results],
         risk_high             = [r.risk_probabilities[4] for r in results],
         risk_extreme          = [r.risk_probabilities[5] for r in results],
-        action_monitor        = [r.action_probabilities[1] for r in results],
-        action_alert          = [r.action_probabilities[2] for r in results],
-        action_prepare        = [r.action_probabilities[3] for r in results],
-        action_act            = [r.action_probabilities[4] for r in results],
     )
 
     if include_cdi
@@ -1246,7 +1284,7 @@ function run_csv(input_csv::String, output_csv::String;
     # ── Agri fusion layer: agri_risk = f(met_risk, crop_stress(wrsi10)) ──────
     # results[i] ↔ df row i (inputs built in df order; process preserves order).
     if include_agri
-        Tc = build_crop_cpt()
+        Tc = build_cws_cpt(); Ta = build_agri_cpt()
         _w10_idx(row) = has_w10_val ? categorize_wrsi10(_f(row.wrsi10_value)) :
                         has_w10_cls ? categorize_wrsi10(_s(row.wrsi10_class)) : 1
         rows = collect(DataFrames.eachrow(df))
@@ -1257,11 +1295,12 @@ function run_csv(input_csv::String, output_csv::String;
         agri = [zeros(Float64, 5) for _ in results]
         for (i, r) in enumerate(results)
             row = rows[i]
-            w10_ev = something(_soft("w10", 4, row), onehot(_w10_idx(row), 4))
-            fpar_ev = onehot(1, 4)                    # Option 2 will supply real FPAR
-            crop = infer_crop_stress(w10_ev, fpar_ev, Tc)
-            crop_lvl[i] = CROP_STRESS_STATES[argmax(crop)]
-            agri[i] = compute_agri_risk_probs(r.risk_probabilities, crop)
+            w10_ev  = something(_soft("w10",   4, row), onehot(_w10_idx(row), 4))
+            fpar_ev = something(_soft("fpar",  4, row), onehot(1, 4))  # Option 2
+            phase_ev = something(_soft("phase", 3, row), onehot(1, 3)) # Option 3
+            cws = infer_cws(w10_ev, fpar_ev, phase_ev, Tc)
+            crop_lvl[i] = CROP_STRESS_STATES[argmax(cws)]
+            agri[i] = compute_agri_risk_probs(r.risk_probabilities, cws, Ta)
         end
         out.crop_stress    = crop_lvl
         out.agri_minimal   = [a[1] for a in agri]
@@ -1275,6 +1314,9 @@ function run_csv(input_csv::String, output_csv::String;
         out.crma_state    = [CRMA_STATES[c[1]] for c in crma]
         out.traffic_light = [TRAFFIC_LIGHT[CRMA_STATES[c[1]]] for c in crma]
         out.crma_explanation = ["agri: " * c[2] for c in crma]
+        # Confidence must describe the SAME posterior the CRMA state came from.
+        out.confidence_met = copy(out.confidence)
+        out.confidence     = [posterior_confidence(a) for a in agri]
     end
 
     mkpath(dirname(abspath(output_csv)))
@@ -1299,27 +1341,33 @@ end
 function self_test()
     @info "Running drought BN self-test..."
     risk_cpt, _ = build_risk_cpt(; include_agreement=true)
-    action_cpt  = build_action_cpt()
 
     # 1. Worst case: Severe_Drought + Very_High deficit + Widespread + Deteriorating + High agreement
-    rp, ap = infer_direct(5, 5, 3, 3, 3, risk_cpt, action_cpt)
-    @info "Test 1 (worst case):" risk=RISK_STATES[argmax(rp)] action=ACTION_STATES[argmax(ap)]
+    #    → Extreme risk, and the CRMA ladder tops out at Review (the highest
+    #    analytical posture — NOT an instruction to act).
+    rp = infer_direct(5, 5, 3, 3, 3, risk_cpt)
+    crma1, _ = compute_crma_state(rp)
+    @info "Test 1 (worst case):" risk=RISK_STATES[argmax(rp)] crma=CRMA_STATES[crma1]
     @assert RISK_STATES[argmax(rp)] == "Extreme" "Expected Extreme risk"
-    @assert ACTION_STATES[argmax(ap)] == "Act" "Expected Act"
+    @assert CRMA_STATES[crma1] == "Review" "Worst case must reach the top rung (Review)"
 
     # 2. Best case: Above_Normal + Very_Low + Localized + Improving + High agreement
-    rp2, ap2 = infer_direct(1, 1, 1, 1, 3, risk_cpt, action_cpt)
-    @info "Test 2 (best case):" risk=RISK_STATES[argmax(rp2)] action=ACTION_STATES[argmax(ap2)]
+    rp2 = infer_direct(1, 1, 1, 1, 3, risk_cpt)
+    crma2, _ = compute_crma_state(rp2)
+    @info "Test 2 (best case):" risk=RISK_STATES[argmax(rp2)] crma=CRMA_STATES[crma2]
     @assert RISK_STATES[argmax(rp2)] == "Minimal" "Expected Minimal"
-    @assert ACTION_STATES[argmax(ap2)] == "Monitor" "Expected Monitor"
+    @assert CRMA_STATES[crma2] == "Monitor" "Best case must stay on the bottom rung (Monitor)"
 
-    # 3. Low agreement spreads probabilities
-    rp_high, _ = infer_direct(3, 3, 2, 2, 3, risk_cpt, action_cpt)
-    rp_low,  _ = infer_direct(3, 3, 2, 2, 1, risk_cpt, action_cpt)
+    # 3. Low agreement spreads probabilities (and therefore LOWERS confidence —
+    #    posterior_confidence is the entropy-sharpness replacement for the
+    #    deleted action node's maximum(action_probs)).
+    rp_high = infer_direct(3, 3, 2, 2, 3, risk_cpt)
+    rp_low  = infer_direct(3, 3, 2, 2, 1, risk_cpt)
     H_high = -sum(p * log(max(p, 1e-10)) for p in rp_high)
     H_low  = -sum(p * log(max(p, 1e-10)) for p in rp_low)
     @assert H_low > H_high "Low agreement should increase entropy"
-    @info "Test 3 (agreement entropy):" H_low H_high
+    @assert posterior_confidence(rp_low) < posterior_confidence(rp_high) "Low agreement must lower confidence"
+    @info "Test 3 (agreement entropy → confidence):" H_low H_high conf_low=posterior_confidence(rp_low) conf_high=posterior_confidence(rp_high)
 
     # 4. CDI evidence node — cdi=1 (No_drought/absent) must be a no-op relative
     #    to the CDI-free scoring (backward compatibility guarantee).
@@ -1349,42 +1397,76 @@ function self_test()
 
     # 8. CDI tensor/matmul path agrees with direct compute_risk_probs.
     Tc = build_risk_cpt_tensor(; include_cdi=true)
-    rp_mm, _ = infer_soft_matmul_cdi(onehot(4,5), onehot(4,5), onehot(2,3),
-                                     onehot(3,3), onehot(1,4), onehot(6,6),
-                                     Tc, action_cpt)
+    rp_mm = infer_soft_matmul_cdi(onehot(4,5), onehot(4,5), onehot(2,3),
+                                  onehot(3,3), onehot(1,4), onehot(6,6), Tc)
     rp_dir = compute_risk_probs(4, 4, 2, 3, 3, 1, 6)
     @assert maximum(abs.(rp_mm .- rp_dir)) < 1e-10 "CDI matmul must match direct CPT"
     @info "Test 8 (CDI matmul == direct):" d=maximum(abs.(rp_mm .- rp_dir))
 
-    # ── Agri layer (Approach B: crop_water_stress + agri_risk) ──────────────
-    Tc_crop = build_crop_cpt()
+    # ── Agri layer (Approach B, per bn-approach-b-crop-stress-subbranch.md) ──
+    Tc_cws = build_cws_cpt(); Ta_agri = build_agri_cpt()
     met = [0.05, 0.15, 0.45, 0.25, 0.10]   # a Moderate-ish met_risk posterior
+    neutral_phase = onehot(1, 3)           # Vegetative (Option 3 supplies real)
 
-    # 9. wrsi10 No_Stress (crop_stress None) → agri ≈ met, no escalation.
-    cs_none = infer_crop_stress(onehot(1, 4), onehot(1, 4), Tc_crop)
-    agri_none = compute_agri_risk_probs(met, cs_none)
-    @assert CROP_STRESS_STATES[argmax(cs_none)] == "No_Stress" "No_Stress WRSI → crop No_Stress"
-    @assert (agri_none[4] + agri_none[5]) <= (met[4] + met[5]) + 1e-9 "No crop stress must not escalate"
-    @info "Test 9 (wrsi10 No_Stress ≈ met):" met_HE=(met[4]+met[5]) agri_HE=(agri_none[4]+agri_none[5])
+    # 9. §3.2 NO-OP GUARANTEE: cws = No_Stress ⇒ agri_risk == risk EXACTLY
+    #    (identity pass-through; mirrors the cdi=1 / tail=1 guarantees).
+    agri_id = compute_agri_risk_probs(met, onehot(1, 4), Ta_agri)
+    @assert maximum(abs.(agri_id .- met)) < 1e-12 "cws=No_Stress must be an exact identity on met_risk"
+    @info "Test 9 (cws=No_Stress → identity):" max_abs_diff=maximum(abs.(agri_id .- met))
 
     # 10. wrsi10 Severe escalates agri_risk above met_risk.
-    cs_sev = infer_crop_stress(onehot(4, 4), onehot(1, 4), Tc_crop)
-    agri_sev = compute_agri_risk_probs(met, cs_sev)
+    cws_sev = infer_cws(onehot(4, 4), onehot(1, 4), neutral_phase, Tc_cws)
+    agri_sev = compute_agri_risk_probs(met, cws_sev, Ta_agri)
+    @assert CROP_STRESS_STATES[argmax(cws_sev)] == "Severe" "Severe WRSI → cws Severe"
     @assert (agri_sev[4] + agri_sev[5]) > (met[4] + met[5]) "Severe WRSI must escalate P(High∪Extreme)"
     @info "Test 10 (wrsi10 Severe escalates):" agri_HE=(agri_sev[4]+agri_sev[5]) met_HE=(met[4]+met[5])
 
-    # 11. Divergence: met Extreme + crop None → agri tempered below met.
-    met_ext = [0.0, 0.0, 0.05, 0.25, 0.70]
-    agri_div = compute_agri_risk_probs(met_ext, cs_none)
-    @assert agri_div[5] < met_ext[5] "met-Extreme + crop-None should temper Extreme mass"
-    @info "Test 11 (divergence tempers):" met_extreme=met_ext[5] agri_extreme=agri_div[5]
+    # 11. wrsi10 No_Stress through the cws CPT ≈ met (no spurious escalation
+    #     from smoothing leakage).
+    cws_ok = infer_cws(onehot(1, 4), onehot(1, 4), neutral_phase, Tc_cws)
+    agri_ok = compute_agri_risk_probs(met, cws_ok, Ta_agri)
+    @assert CROP_STRESS_STATES[argmax(cws_ok)] == "No_Stress" "No_Stress WRSI → cws No_Stress"
+    @assert abs((agri_ok[4] + agri_ok[5]) - (met[4] + met[5])) < 0.02 "healthy WRSI must not move risk materially"
+    @info "Test 11 (healthy wrsi10 ≈ met):" met_HE=(met[4]+met[5]) agri_HE=(agri_ok[4]+agri_ok[5])
 
-    # 12. Convergence (Option-2 preview): WRSI+FPAR both stressed escalates one
-    #     level beyond WRSI alone.
-    cs_w = infer_crop_stress(onehot(2, 4), onehot(1, 4), Tc_crop)   # Mild WRSI only
-    cs_wf = infer_crop_stress(onehot(2, 4), onehot(2, 4), Tc_crop)  # Mild WRSI + Mild FPAR
-    @assert argmax(cs_wf) >= argmax(cs_w) "meteo+veg convergence must not de-escalate"
-    @info "Test 12 (WRSI+FPAR convergence):" crop_wrsi_only=CROP_STRESS_STATES[argmax(cs_w)] crop_both=CROP_STRESS_STATES[argmax(cs_wf)]
+    # 12. §3.2 BOUNDEDNESS: cws alone cannot manufacture Extreme from a Minimal
+    #     met state (no single-index basis risk).
+    met_min = [0.85, 0.15, 0.0, 0.0, 0.0]
+    agri_min = compute_agri_risk_probs(met_min, onehot(4, 4), Ta_agri)
+    @assert argmax(agri_min) < 4 "cws=Severe alone must not push a Minimal met state to High/Extreme"
+    @assert agri_min[5] < 0.05 "cws alone must not manufacture Extreme"
+    @info "Test 12 (bounded — no single-index basis risk):" agri=AGRI_RISK_STATES[argmax(agri_min)] p_extreme=agri_min[5]
+
+    # 13. Convergence (Option-2 preview): WRSI+FPAR both stressed escalates
+    #     beyond WRSI alone (ASAP level-3 rung).
+    cws_w  = infer_cws(onehot(2, 4), onehot(1, 4), neutral_phase, Tc_cws)  # Mild WRSI only
+    cws_wf = infer_cws(onehot(2, 4), onehot(2, 4), neutral_phase, Tc_cws)  # Mild WRSI + Mild FPAR
+    @assert argmax(cws_wf) > argmax(cws_w) "meteo+veg convergence must escalate"
+    @info "Test 13 (WRSI+FPAR convergence):" cws_wrsi_only=CROP_STRESS_STATES[argmax(cws_w)] cws_both=CROP_STRESS_STATES[argmax(cws_wf)]
+
+    # 14. Phenology (Option-3 preview): the same deficit at Flowering escalates
+    #     vs Vegetative, and is damped at Maturation. Ky-weighted, never
+    #     creating stress on its own.
+    cws_veg  = infer_cws(onehot(3, 4), onehot(1, 4), onehot(1, 3), Tc_cws)
+    cws_flow = infer_cws(onehot(3, 4), onehot(1, 4), onehot(2, 3), Tc_cws)
+    cws_mat  = infer_cws(onehot(3, 4), onehot(1, 4), onehot(3, 3), Tc_cws)
+    @assert argmax(cws_flow) > argmax(cws_veg) "Flowering must amplify a deficit"
+    @assert argmax(cws_mat)  < argmax(cws_veg) "Maturation must damp a deficit"
+    cws_healthy_flow = infer_cws(onehot(1, 4), onehot(1, 4), onehot(2, 3), Tc_cws)
+    @assert CROP_STRESS_STATES[argmax(cws_healthy_flow)] == "No_Stress" "phase must not create stress on its own"
+    @info "Test 14 (phenology Ky modifier):" veg=CROP_STRESS_STATES[argmax(cws_veg)] flowering=CROP_STRESS_STATES[argmax(cws_flow)] maturation=CROP_STRESS_STATES[argmax(cws_mat)]
+
+    # ── Risk-cognition ladder + entropy confidence (action node deleted) ──────
+    # 15. posterior_confidence: flat ⇒ 0, one-hot ⇒ 1, and it is a statement
+    #     about belief sharpness, not about which action to take.
+    @assert posterior_confidence(fill(0.2, 5)) < 1e-9 "flat posterior must have zero confidence"
+    @assert posterior_confidence(onehot(3, 5)) > 1.0 - 1e-9 "one-hot posterior must have full confidence"
+    conf_mid = posterior_confidence([0.0, 0.0, 0.1, 0.1, 0.8])
+    @assert 0.0 < conf_mid < 1.0 "a peaked-but-spread posterior sits strictly between"
+    # The ladder is verb-only: no state may imply a prescribed action.
+    @assert CRMA_STATES == ["Monitor", "Evaluate", "Assess", "Review"] "CRMA must be the verb-only risk-cognition ladder"
+    @assert !isdefined(@__MODULE__, :ACTION_STATES) "the action node must not exist"
+    @info "Test 15 (entropy confidence + verb-only ladder):" flat=posterior_confidence(fill(0.2,5)) peaked=conf_mid onehot_=posterior_confidence(onehot(3,5))
 
     @info "All self-tests passed."
 end
@@ -1422,8 +1504,7 @@ function main()
         0.55, 0.45, "Medium", -1.7,   # deficit prob, spatial, agreement, ens-min SPI
     )
     risk_cpt, _ = build_risk_cpt()
-    action_cpt = build_action_cpt()
-    result = process_boundary(b, risk_cpt, action_cpt; include_tail_risk=true)
+    result = process_boundary(b, risk_cpt; include_tail_risk=true)
     @info "Demo result:" boundary=result.boundary_id risk=result.risk_level crma=result.crma_state confidence=@sprintf("%.2f", result.confidence)
 
     println("\nRisk probabilities:")

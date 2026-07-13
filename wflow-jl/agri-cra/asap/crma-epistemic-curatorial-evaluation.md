@@ -164,8 +164,18 @@ but its *content* is **"an expert rule system in Bayesian dress"**:
 
 - the CPT numbers in `compute_risk_probs` are hand-authored `elseif` vectors,
   not derived from data or MaxEnt-under-constraints;
-- the ensemble-derived nodes (`def`, `tail`, `agreement`, and now `wrsi10`) share
-  a **common origin** and are treated as independent parents → double counting;
+- the SEAS5-derived nodes (`def`, `tail`, `agreement`) share a **common origin**
+  and are treated as independent parents → double counting. **Separately** (and
+  this is the new one introduced by Option 1): `wrsi10` is *not* SEAS5-derived —
+  it comes from wflow.jl forced by **observed** rainfall — but it therefore
+  shares its origin with `cur` (ERA5 SPI-3 obs) and with the precipitation
+  component inside `cdi`. Those live on the met branch while `wrsi10` lives on
+  the crop branch, and they meet at the `agri_risk` fusion, where `_CWS_SHIFT`
+  applies a monotone upward push. So one missing-rain signal can escalate the
+  posterior **twice**. Approach B does not cause this, but it does localise it
+  to a single 100-entry `AGRI_CPT` — which is precisely where a
+  correlation-aware fusion (or a shared latent "observed rainfall deficit"
+  node) can fix it;
 - the DBN uses a **posterior-recycling temporal hack** (`blend_temporal_prior`)
   rather than an explicit risk-persistence kernel;
 - there is **no operational target proposition**, so the hidden risk node is not
@@ -239,13 +249,30 @@ analysis-ready streams + update belief), not a full daily impact-model chain for
   matmul contraction, cost-loss CRMA triggering (`compute_crma_state`);
 - per-member storylines (`select_storylines`) and a DBN sequence runner
   (`run_dbn_sequence`) — the replay substrate for verification;
-- the Approach-B structure that keeps the network Jaynes-clean and ≤5 parents
-  per node (`bn-approach-b-crop-stress-subbranch.md`).
+- **Option 1 shipped (commit `ff22268`)**: the full Approach-B structure —
+  `crop_water_stress` (192-entry CPT), `agri_risk` (100-entry `AGRI_CPT`), the
+  exact `cws=No_Stress` identity (`_CWS_SHIFT[1]=0.0`), the sum-rule fusion in
+  `compute_agri_risk_probs`, and **CRMA already running on `agri_risk`** with
+  `crma_state_met` retained. 14/14 self-tests pass.
 
-**Reconstruction edits (small, mechanical):**
-- rename `CRMA_STATES = ["Monitor","Evaluate","Assess","Review"]` and the
-  `TRAFFIC_LIGHT` map; retire the deprecated `ACTION_STATES` / `build_action_cpt`
-  path (delete the action node, per the paper). Self-tests updated accordingly.
+**Reconstruction edits (orthogonal to Option 1 — different layer, no conflict):**
+Option 1 touched the *evidence/fusion* layer; the reconstruction touches only
+the *output/decision* layer, so they compose without collision.
+- **Rename (trivially safe):** `CRMA_STATES = ["Monitor","Evaluate","Assess",
+  "Review"]` + the `TRAFFIC_LIGHT` key. `compute_crma_state` returns an *index*
+  and never references the names, so this cannot reach the agri layer. Rename the
+  internal `p_act`/`θ_act` → `p_review`/`θ_review`; **the cost-loss rule stays** —
+  the paper endorses cost-loss producing an *analytical posture*, not an action.
+- **Delete the action node:** drop `ACTION_STATES` / `build_action_cpt`, unthread
+  the `action_cpt` parameter (~10 functions), drop `recommended_action` +
+  `action_*` CSV columns, fix self-tests 1–2 which assert on
+  `ACTION_STATES[argmax(ap)]`.
+- **The one non-mechanical decision:** `confidence = maximum(action_probs)` is
+  *derived from the action node*, so deleting it orphans `confidence`. It must be
+  redefined as a sharpness measure on the posterior itself — either
+  `maximum(agri_probs)` (modal probability) or `1 − H/H_max` (normalised
+  entropy). The entropy form fits the calibration framing better and is the
+  recommended replacement.
 
 **Content work (the real, but bounded, effort — turns dress into body):**
 1. **Define the target proposition** operationally, e.g. `P(≥N cropland-ha /
