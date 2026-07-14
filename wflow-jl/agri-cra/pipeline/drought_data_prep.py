@@ -517,6 +517,14 @@ def main() -> None:
                     help="Number of ensemble members to use for P2 (deficit_prob) "
                          "and P5 (tail_risk). Default 51 (all). v2 uses 25 "
                          "(first 25 = members with full 1981-now hindcast).")
+    ap.add_argument("--agree-high-spread", type=float, default=0.50,
+                    help="inter-member SPI-3 std BELOW which forecast_agreement "
+                         "= High (default 0.50). EXPERT first-pass value — "
+                         "calibrate against the realised spread distribution.")
+    ap.add_argument("--agree-low-spread", type=float, default=0.90,
+                    help="inter-member SPI-3 std AT/ABOVE which forecast_agreement "
+                         "= Low (default 0.90); between the two = Medium. "
+                         "EXPERT first-pass value.")
     ap.add_argument("--rp-years", type=int, default=5,
                     help="Return period years (default 5; choices: 3,5,10,20,50)")
     ap.add_argument("--spi-period", default="SPI3",
@@ -686,6 +694,7 @@ def main() -> None:
         ens_mean_l1 = fc_target.mean(dim="member")
         ens_min_l1  = fc_target.min(dim="member")
         ens_max_l1  = fc_target.max(dim="member")
+        ens_spread  = fc_target.std(dim="member")              # (lat, lon)
         ens_min_anylead = ens_min_l1                            # single lead → same
         deficit_threshold_label = (f"era5_ecmwf_rp_icechunk:{args.rp_years}yr "
                                    f"{args.rp_prefer}")
@@ -705,6 +714,7 @@ def main() -> None:
         ens_mean_l1 = l1.mean(dim="member")
         ens_min_l1  = l1.min(dim="member")
         ens_max_l1  = l1.max(dim="member")
+        ens_spread  = l1.std(dim="member")                      # (lat, lon)
         ens_min_anylead = fcst_rg.min(dim="member").min(dim="lead")
         deficit_threshold_label = f"scalar:{args.deficit_spi}"
         crosses_rp_any = (fcst_rg <= rp_thresh).any(dim=["member", "lead"]).astype("float32")
@@ -722,6 +732,30 @@ def main() -> None:
     ens_min_p5_adm   = zonal_quantile(ens_min_anylead, fc_mask, n_adm, q=0.05)
     ens_min_mean_adm = zonal_reduce(ens_min_anylead, fc_mask, rp_thresh.lat, n_adm)
     ens_min_peak_adm = zonal_extreme(ens_min_anylead, fc_mask, n_adm, agg="min")
+
+    # ── forecast_agreement — DERIVED, not hardcoded ───────────────────────────
+    # Was previously the literal string "Medium" for every boundary and every
+    # month, which made the Julia agreement-blend a constant 80/20 flattening
+    # toward uniform on every row: an entropy tax, not evidence.
+    #
+    # Derived here from the INTER-MEMBER SPREAD of forecast SPI-3, deliberately
+    # NOT from the deficit probability `p_deficit`. Agreement computed from
+    # p_deficit would be a deterministic function of `def` — the same signal
+    # restated, adding nothing (and worsening the shared-signal problem below).
+    # The spread carries information the threshold-crossing frequency cannot:
+    # two ensembles can both sit at p = 0.5 while one has members clustered
+    # tightly either side of the threshold and the other has members ranging
+    # from very wet to very dry. Only the second is a genuinely uncertain
+    # forecast, and only the spread can tell them apart.
+    ens_spread_adm = zonal_reduce(ens_spread, fc_mask, rp_thresh.lat, n_adm)
+    agreement_cls = np.where(
+        ens_spread_adm < args.agree_high_spread, "High",
+        np.where(ens_spread_adm < args.agree_low_spread, "Medium", "Low"))
+    # Boundaries with no forecast pixels → fall back to Medium (neutral-ish).
+    agreement_cls = np.where(np.isfinite(ens_spread_adm), agreement_cls, "Medium")
+    print(f"[prep] forecast_agreement (from inter-member SPI spread): "
+          f"{dict(zip(*np.unique(agreement_cls, return_counts=True)))}  "
+          f"spread median={np.nanmedian(ens_spread_adm):.2f}", flush=True)
 
     ens_mean_l1_adm = zonal_reduce(ens_mean_l1, fc_mask, rp_thresh.lat, n_adm)
     ens_min_l1_adm  = zonal_reduce(ens_min_l1,  fc_mask, rp_thresh.lat, n_adm)
@@ -759,7 +793,8 @@ def main() -> None:
         "spatial_coverage": np.round(spatial_cov_final, 4),
         "spatial_cov_mean_p": np.round(spatial_cov_adm, 4),
         "hotspot_fraction": np.round(hotspot_frac_adm, 4),
-        "forecast_agreement": "Medium",
+        "forecast_agreement": agreement_cls,
+        "forecast_spread": np.round(ens_spread_adm, 4),   # raw inter-member SPI std
         "ens_min_spi": np.round(ens_min_p5_adm, 4),       # tail-risk evidence
         "ens_min_spi_mean": np.round(ens_min_mean_adm, 4),
         "ens_min_spi_peak": np.round(ens_min_peak_adm, 4),
