@@ -107,6 +107,54 @@ const DEFICIT_THRESHOLDS      = (very_low=0.2, low=0.4, medium=0.6, high=0.8)
 const SPATIAL_THRESHOLDS      = (localized=0.3, moderate=0.6)
 const TREND_BAND_DEFAULT      = 0.1   # SPI / month
 
+# ── SEAS5 shared-signal (redundancy) discount ────────────────────────────────
+#
+# THE PROBLEM. `def`, `spa` and `tail` are NOT three independent forecasts. They
+# are three summaries of ONE object: the per-member RP-exceedance field
+# `crosses_rp = (SEAS5 SPI-3 <= ERA5 fitted RP threshold)`.
+#   def  = fraction of members crossing
+#   spa  = fraction of pixels where a majority of members cross
+#   tail = p5 of the per-pixel ensemble-min SPI
+# evidence_nodes.md says so outright: "RP-exceedance is the backbone of def +
+# spa + tail — it drives three of the five parent nodes, not one." Yet the CPT
+# multiplies them as conditionally independent parents, so ONE forecast is
+# counted three times.
+#
+# The symptom is already in the repo's history: `tail` was DROPPED in v2_notail
+# "because it was driving 84% of admin-months to Actionable_Risk" — which is
+# exactly what redundant evidence does. That fix amputated the node instead of
+# modelling the dependency.
+#
+# THE FIX (same shape as the wrsi10<->cur discount at the agri fusion). `def` is
+# the primary, highest-weight summary of the exceedance field, so attenuate the
+# `spa` and `tail` contributions by how much of that field `def` has already
+# accounted for:
+#
+#     λ_seas(d) = 1 − κ·d/4        d = deficit − 1 ∈ 0..4      λ(0)=1 … λ(4)=1−κ
+#
+# What this buys, and why it is not merely a damping hack:
+#   • def Very_Low + high tail → FULL weight. A low mean deficit probability with
+#     a nasty worst member is precisely the case where the tail carries
+#     information the mean does not. Nothing is double-counted, so nothing is
+#     discounted. (The T1/T2/T3 expert rules encode exactly this case and are
+#     guarded on d ≤ 2, i.e. where λ ≈ 1 — they keep firing at full strength.)
+#   • def Very_High + high tail → DISCOUNTED. When almost every member already
+#     crosses the threshold, "the worst member is bad" and "it is widespread" are
+#     near-tautologies. This is where the 84% over-escalation came from.
+#
+# NOT discounted: `cur` and `trn` (ERA5 *observations*, a genuinely different
+# source) and `cdi` (an independent observational composite).
+#
+# κ = 0.5 is an EXPERT first-pass value, not a measurement. Calibrate from the
+# empirical correlation between def/spa/tail over the hindcast and log the
+# revision like any other curatorial act.
+const _SEAS_SHARED_KAPPA = 0.5
+
+"""λ_seas(d) ∈ [1−κ, 1]: how much of a `spa`/`tail` contribution is still NEW
+information once `def` (deficit index 1..5) has already fired. Decreasing in d."""
+_seas_redundancy_lambda(deficit::Int; κ::Float64=_SEAS_SHARED_KAPPA)::Float64 =
+    1.0 - κ * (deficit - 1) / 4.0
+
 # ============================================================================
 # CATEGORISATION
 # ============================================================================
@@ -360,6 +408,7 @@ function compute_risk_probs(
     agreement::Int,  # 1-3
     tail::Int=1,     # 1-4 (Nil..High)
     cdi::Int=1,      # 1-6 (No_drought..Alert); 1 = CDI-absent (no effect)
+    seas_kappa::Float64=_SEAS_SHARED_KAPPA,   # shared-signal discount (0 = off)
 )::Vector{Float64}
     c  = current   - 1  # 0..4 (drier ↑)
     d  = deficit   - 1  # 0..4 (more deficit ↑)
@@ -368,15 +417,34 @@ function compute_risk_probs(
     ag = agreement - 1
     tr = tail      - 1  # 0..3
 
-    # Base drought-stress score from current state + forecast deficit
-    base_risk = c * 0.30 + d * 0.55
+    # SEAS5 shared-signal discount: `spa` and `tail` restate the same
+    # RP-exceedance field that `def` already summarises, so their marginal
+    # contribution shrinks as `def` rises. See _SEAS_SHARED_KAPPA above.
+    λ_seas = _seas_redundancy_lambda(deficit; κ=seas_kappa)
 
-    # Spatial modifier (same as flood)
-    if s == 2       # Widespread
-        base_risk += 0.5
-    elseif s == 1   # Moderate
-        base_risk += 0.25
-    end
+    # Forecast-reliability weight from ensemble agreement. `agreement` is a
+    # statement about how much the SEAS5 FORECAST can be trusted, so it scales
+    # the forecast-derived terms (def, spa, tail) and lets the OBSERVATIONS
+    # (cur, trn, cdi) carry when the ensemble is in disarray.
+    #
+    # It must NOT flatten the whole posterior toward uniform, which is what the
+    # old blend did. Uniform is not neutral on a monotone risk ladder — it
+    # asserts P(High∪Extreme) = 0.4 — so a benign boundary was escalated to the
+    # TOP rung purely because the ensemble disagreed, MANUFACTURING RISK OUT OF
+    # IGNORANCE. (That bug was inert only because forecast_agreement was
+    # hardcoded to a constant "Medium" in drought_data_prep.py.)
+    w_fcst = ag == 0 ? 0.65 :     # Low agreement    → trust the forecast less
+             ag == 1 ? 0.85 :     # Medium
+                       1.00       # High             → full weight
+    spa_add  = s == 2 ? 0.5 : s == 1 ? 0.25 : 0.0
+    tail_add = tr == 3 ? 0.60 :   # High tail     (ens_min < -1.5)
+               tr == 2 ? 0.35 :   # Moderate tail (ens_min < -1.0)
+               tr == 1 ? 0.10 : 0.0
+
+    # Base score: observation term at full weight; forecast terms scaled by
+    # reliability, with spa/tail additionally discounted against def.
+    base_risk = c * 0.30 +
+                w_fcst * (d * 0.55 + (spa_add + tail_add) * λ_seas)
 
     # Trend modifier — Deteriorating SPI raises risk; Improving drops it.
     if t == 2       # Deteriorating
@@ -385,15 +453,7 @@ function compute_risk_probs(
         base_risk -= 0.30
     end
 
-    # Tail-risk modifier — worst-case ensemble member already deep in
-    # drought, even if mean deficit prob is moderate.
-    if tr == 3       # High tail (ens_min < -1.5)
-        base_risk += 0.60
-    elseif tr == 2   # Moderate tail (ens_min < -1.0)
-        base_risk += 0.35
-    elseif tr == 1   # Low tail (ens_min < -0.5)
-        base_risk += 0.10
-    end
+    # (spa + tail are folded into base_risk above, scaled by w_fcst · λ_seas.)
 
     # CDI modifier — the JRC convergence-of-evidence signal is an on-the-ground
     # observational anchor. Alert (precip+soil+vegetation all firing) pushes
@@ -464,12 +524,18 @@ function compute_risk_probs(
         [0.0, 0.0, 0.10, 0.40, 0.50]
     end
 
-    # Forecast agreement modifier — Low agreement spreads probability mass.
-    uniform = fill(0.20, 5)
-    if ag == 0       # Low agreement
-        probs = 0.5 .* probs .+ 0.5 .* uniform
-    elseif ag == 1   # Medium agreement
-        probs = 0.8 .* probs .+ 0.2 .* uniform
+    # Residual widening — a disagreeing ensemble should also leave us LESS
+    # CONFIDENT, not just less swayed. Kept small and BOUNDED so it can never on
+    # its own push a benign boundary over a CRMA threshold: at the worst
+    # (Low agreement, zero risk) it contributes P(High∪Extreme) = 0.12·0.4 =
+    # 0.048, well under θ_review = C/L = 0.2. The old 0.5 weight put that at
+    # exactly 0.20 — dead on the threshold — which is how ignorance alone was
+    # escalating benign boundaries to the top rung.
+    u_w = ag == 0 ? 0.12 :     # Low
+          ag == 1 ? 0.05 :     # Medium
+                    0.0        # High → untouched
+    if u_w > 0
+        probs = (1.0 - u_w) .* probs .+ u_w .* fill(0.20, 5)
     end
 
     return probs ./ sum(probs)
@@ -517,24 +583,24 @@ tensor (risk, cur, def, spa, trn, tail, cdi). Six conditioning parents exceed
 RxInfer's DiscreteTransition exact-rule cap, so CDI runs use the matmul path
 (`infer_soft_matmul_cdi`) — mirrors how include_agreement already falls back.
 """
-function build_risk_cpt_tensor(; include_tail_risk::Bool=true, include_cdi::Bool=false)
+function build_risk_cpt_tensor(; include_tail_risk::Bool=true, include_cdi::Bool=false, agreement::Int=3)
     if include_cdi
         # Full model: tail is always present alongside CDI.
         T = zeros(Float64, 5, 5, 5, 3, 3, 4, 6)
         for cd in 1:6, tl in 1:4, tr in 1:3, sp in 1:3, df in 1:5, cu in 1:5
-            T[:, cu, df, sp, tr, tl, cd] = compute_risk_probs(cu, df, sp, tr, 3, tl, cd)
+            T[:, cu, df, sp, tr, tl, cd] = compute_risk_probs(cu, df, sp, tr, agreement, tl, cd)
         end
         return T
     elseif include_tail_risk
         T = zeros(Float64, 5, 5, 5, 3, 3, 4)
         for tl in 1:4, tr in 1:3, sp in 1:3, df in 1:5, cu in 1:5
-            T[:, cu, df, sp, tr, tl] = compute_risk_probs(cu, df, sp, tr, 3, tl)
+            T[:, cu, df, sp, tr, tl] = compute_risk_probs(cu, df, sp, tr, agreement, tl)
         end
         return T
     else
         T = zeros(Float64, 5, 5, 5, 3, 3)
         for tr in 1:3, sp in 1:3, df in 1:5, cu in 1:5
-            T[:, cu, df, sp, tr] = compute_risk_probs(cu, df, sp, tr, 3, 1)
+            T[:, cu, df, sp, tr] = compute_risk_probs(cu, df, sp, tr, agreement, 1)
         end
         return T
     end
@@ -725,6 +791,30 @@ function infer_soft_matmul_cdi(
 end
 
 onehot(idx::Int, k::Int) = (v = zeros(Float64, k); v[idx] = 1.0; v)
+
+"""
+Apply the forecast-agreement blend to a risk posterior.
+
+Every tensor builder above bakes in `agreement = 3` (High), i.e. the UNBLENDED
+base — so agreement was silently dropped in the RxInfer and CDI paths (which
+includes the operational `--cdi --agri` path). It only survived in the flat
+`infer_direct` matmul path.
+
+Blending after the contraction is not an approximation, it is exact. The blend
+is affine, `p ↦ a·p + (1−a)·u`, and the contraction weights sum to 1, so
+
+    blend(Σᵢ wᵢ·pᵢ) = a·Σᵢ wᵢ·pᵢ + (1−a)·u = Σᵢ wᵢ·(a·pᵢ + (1−a)·u) = Σᵢ wᵢ·blend(pᵢ)
+
+Carrying `agreement` as an eighth tensor dimension would give the same numbers
+at 3× the tensor. Low agreement spreads mass toward uniform (an honest widening
+when the ensemble disagrees); High leaves the posterior untouched.
+"""
+function apply_agreement_blend(probs::Vector{Float64}, agr::Int)::Vector{Float64}
+    agr >= 3 && return probs                 # High → unchanged (the tensor base)
+    a = agr <= 1 ? 0.5 : 0.8                 # Low → 0.5 ; Medium → 0.8
+    q = a .* probs .+ (1.0 - a) .* fill(0.2, 5)
+    return q ./ sum(q)
+end
 
 # ============================================================================
 # AGRI LAYER — crop_water_stress + agri_risk (ASAP Option 1, Approach B)
@@ -1049,9 +1139,14 @@ used for any parent whose `*_probs` field is populated, else a one-hot from
 the categorised index.
 """
 function process_boundary_cdi(
-    b::BoundaryInput, risk_cpt_tensor::AbstractArray{Float64};
+    b::BoundaryInput, risk_cpt_tensors::Vector{<:AbstractArray{Float64}};
     cost_loss_ratio::Float64=0.2,
 )::BoundaryResult
+    # `agreement` is a forecast-RELIABILITY weight and enters compute_risk_probs
+    # non-linearly (it scales the forecast terms before binning), so it cannot be
+    # blended in after the contraction — it must be in the CPT. One tensor per
+    # agreement state (3 × 54k floats ≈ 1.3 MB total; trivial), selected here.
+    risk_cpt_tensor = risk_cpt_tensors[categorize_agreement(b.forecast_agreement)]
     cur_idx = categorize_current_spi3(b.current_spi3)
     def_idx = categorize_deficit(b.forecast_deficit_prob)
     spa_idx = categorize_spatial(b.spatial_coverage)
@@ -1082,7 +1177,9 @@ function process_all_boundaries(
 
     if include_cdi
         # CDI adds a 6th conditioning parent → matmul over the 7-D tensor.
-        T = build_risk_cpt_tensor(; include_cdi=true)
+        # One tensor per agreement state, since agreement scales the forecast
+        # terms non-linearly (see process_boundary_cdi).
+        T = [build_risk_cpt_tensor(; include_cdi=true, agreement=a) for a in 1:3]
         for (i, b) in enumerate(boundaries)
             results[i] = process_boundary_cdi(b, T; cost_loss_ratio)
             i % 50 == 0 && @info "Processed $i/$(length(boundaries)) boundaries (CDI matmul)"
@@ -1675,6 +1772,69 @@ function self_test()
     l_unknown = _cws_idx(infer_cws(onehot(4, 4), onehot(1, 5), neutral_phase, Tc_cws))
     @assert l1 < l_unknown "observed-healthy veg must temper a water deficit vs no veg data"
     @info "Test 18 (ASAP ladder L1<L2<L3):" L1_meteo_only=round(l1, digits=2) L2_fpar_only=round(l2, digits=2) L3_both=round(l3, digits=2) no_veg_data=round(l_unknown, digits=2)
+
+    # ── 19. SEAS5 shared-signal discount ────────────────────────────────────
+    # def / spa / tail are three summaries of ONE RP-exceedance field. The
+    # discount must shrink spa+tail as def rises, WITHOUT touching the case the
+    # tail exists for (low mean deficit, nasty worst member).
+    @assert _seas_redundancy_lambda(1) ≈ 1.0 "λ_seas(def=Very_Low) must be 1 (nothing double-counted yet)"
+    @assert _seas_redundancy_lambda(5) ≈ 1.0 - _SEAS_SHARED_KAPPA "λ_seas(def=Very_High) must be fully discounted"
+    @assert all(_seas_redundancy_lambda(d) > _seas_redundancy_lambda(d + 1) for d in 1:4) "λ_seas must strictly decrease in def"
+
+    # The documented symptom: `tail` was dropped in v2_notail because it drove
+    # 84% of admin-months to the top rung. Enumerate the whole CPT and count the
+    # combinations whose modal risk is Extreme, with the discount on vs off.
+    function _n_extreme(κ)
+        n = 0
+        for tl in 1:4, ag in 1:3, tr in 1:3, sp in 1:3, df in 1:5, cu in 1:5
+            p = compute_risk_probs(cu, df, sp, tr, ag, tl, 1, κ)
+            argmax(p) == 5 && (n += 1)
+        end
+        return n
+    end
+    n_off = _n_extreme(0.0)                       # old behaviour (no discount)
+    n_on  = _n_extreme(_SEAS_SHARED_KAPPA)        # with the discount
+    @assert n_on < n_off "the discount must reduce top-rung inflation"
+    @info "Test 19 (SEAS5 discount — top-rung inflation):" extreme_combos_before=n_off extreme_combos_after=n_on reduction="$(round(100*(n_off-n_on)/n_off, digits=1))%"
+
+    # The tail's REASON FOR EXISTING must survive: low mean deficit + severe worst
+    # member must still escalate (the T-rules are guarded on d ≤ 2, i.e. λ ≈ 1).
+    p_lowdef_notail = compute_risk_probs(3, 2, 1, 2, 3, 1, 1)   # def Low, tail Nil
+    p_lowdef_tail   = compute_risk_probs(3, 2, 1, 2, 3, 4, 1)   # def Low, tail High
+    he(p) = p[4] + p[5]
+    @assert he(p_lowdef_tail) > he(p_lowdef_notail) "a bad tail under LOW def must still escalate — that is what tail is for"
+    @info "Test 19b (tail keeps its job at low def):" P_HE_no_tail=round(he(p_lowdef_notail), digits=3) P_HE_high_tail=round(he(p_lowdef_tail), digits=3)
+
+    # ── 20. forecast_agreement must actually reach the posterior ─────────────
+    # It was dead twice: hardcoded "Medium" in drought_data_prep.py, AND forced
+    # to High (=unblended) inside every tensor builder, so it was silently
+    # dropped on the RxInfer and CDI paths. The blend is affine and the
+    # contraction weights sum to 1, so post-contraction blending is EXACT.
+    H(p) = -sum(x * log(max(x, 1e-12)) for x in p)
+
+    # (a) IGNORANCE MUST NOT MANUFACTURE RISK. A benign boundary (wet, improving,
+    #     no deficit, no CDI) must stay well below θ_review = C/L = 0.2 even when
+    #     the ensemble is in complete disarray. The old blend put it at exactly
+    #     0.20 — dead on the threshold — escalating benign boundaries to the TOP
+    #     rung purely because the forecast was uncertain.
+    benign_hi  = compute_risk_probs(1, 1, 1, 1, 3, 1, 1)   # High agreement
+    benign_low = compute_risk_probs(1, 1, 1, 1, 1, 1, 1)   # Low agreement
+    he(p) = p[4] + p[5]
+    @assert he(benign_low) < 0.2 "low agreement alone must NOT push a benign boundary to Review"
+    @assert compute_crma_state(benign_low)[1] == 1 "benign + low agreement must stay Monitor"
+    @info "Test 20a (ignorance ≠ risk):" P_HE_benign_high=round(he(benign_hi), digits=3) P_HE_benign_low=round(he(benign_low), digits=3) crma=CRMA_STATES[compute_crma_state(benign_low)[1]]
+
+    # (b) Agreement is a FORECAST-RELIABILITY weight: with a stressed forecast, a
+    #     disagreeing ensemble must move us LESS than a unanimous one.
+    stressed_hi  = compute_risk_probs(3, 5, 3, 2, 3, 3, 1)
+    stressed_low = compute_risk_probs(3, 5, 3, 2, 1, 3, 1)
+    @assert he(stressed_low) < he(stressed_hi) "a forecast we cannot trust must sway us less"
+    @info "Test 20b (unreliable forecast sways less):" P_HE_high_agree=round(he(stressed_hi), digits=3) P_HE_low_agree=round(he(stressed_low), digits=3)
+
+    # (c) It must still cost CONFIDENCE — a disagreeing ensemble leaves us less
+    #     sure, so the posterior widens.
+    @assert H(stressed_low) > H(stressed_hi) "low agreement must widen the posterior"
+    @info "Test 20c (agreement costs confidence):" H_high=round(H(stressed_hi), digits=3) H_low=round(H(stressed_low), digits=3)
 
     # ── Risk-cognition ladder + entropy confidence (action node deleted) ──────
     # 15. posterior_confidence: flat ⇒ 0, one-hot ⇒ 1, and it is a statement
