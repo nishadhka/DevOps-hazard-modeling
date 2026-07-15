@@ -45,7 +45,7 @@ quickstart. Highlights:
 |---|---|---|
 | ERA5 SPI-3 obs | `cur`, `trn` | live |
 | SEAS5.1 SPI-3 forecast | `def`, `tail`, `agreement` | live |
-| JRC CDI (EADW / recompute) | `cdi` | **live — wired as a BN node** |
+| JRC CDI (EADW / recompute) | *(cross-check only)* | **not an evidence node** (atom-led decision, 2026-07-14) — reconciled vs ICPAC EADW + obs↔forecast co-occurrence via `pipeline/cdi_crosscheck.py`; posterior untouched. The `--cdi` evidence path remains for the composite-led config. |
 | TAMSAT-ALERT seasonal WRSI | `wrsi_seas` | schema pinned; node wiring next (ASAP Option 4) |
 | wflow.jl 10-day WRSI | `wrsi10` → `crop_stress` → `agri_risk` | **live** — crop-weighted (ASAP crop AFI, CAF>25%) + fused into the BN via `--agri` (ASAP Option 1). Awaits Malawi wflow output for real MWI values. |
 | ASAP FPAR (`zFPARc`/`mFPARd`) | `fpar` | ASAP Option 2 — planned |

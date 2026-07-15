@@ -18,7 +18,8 @@ the DevOps-hazard-modeling repo. See the concept docs one level up:
 | `Project.toml`, `Manifest.toml` | Julia environment (CSV, DataFrames, RxInfer). |
 | `drought_data_prep.py` | ERA5 obs + SEAS5.1 SPI-3 → admin-1 evidence CSV. |
 | `cdi_data_prep.py` | JRC Combined Drought Indicator (EADW / recompute) → admin-1 CDI CSV. |
-| `cdi_evidence_update.py` | Legacy post-hoc CDI likelihood update (superseded by the in-BN `cdi` node). |
+| `cdi_crosscheck.py` | **CDI as a CROSS-CHECK, not evidence** (atom-led decision): reconciles recomputed CDI vs ICPAC EADW, and reports the observation↔forecast co-occurrence against the BN — posterior untouched. |
+| `cdi_evidence_update.py` | Legacy CDI-as-evidence path (superseded; retained for the composite-led config only). |
 | `tamsat_alert_probe.py` | Pin the TAMSAT-ALERT WRSI schema before freezing the `wrsi_seas` node. |
 | `wflow_wrsi_prep.py` | **wflow.jl `output_grid_wrsi.nc` (aet/pet) → `wrsi10` node** per HydroBASINS level-5/6 polygon (WRSI = 100·ΣAET/ΣPET, dekadal or period). |
 | `plot_drought_bn_choropleth.py` | CRMA traffic-light choropleths. |
@@ -39,11 +40,14 @@ uv run cdi_data_prep.py --cdi-source eadw --date 2026-01 \
     --adm1 icpac_adm1v3.geojson --out bn_inputs/cdi_2026-01.csv
 # merge cdi_* columns onto the drought CSV on `id` (cdi_level_idx / cdi_level)
 
-# 3. Run the BN with the CDI evidence node
+# 3. Run the BN (atom-led: CDI is NOT evidence — no --cdi).
 julia --project=. drought_bn_ibf_v1.jl \
     --input-csv  bn_inputs/drought_2026-01.csv \
     --output-csv output/drought_bn_2026-01.csv \
-    --tail-risk --cdi
+    --tail-risk
+# 3b. CDI as a CROSS-CHECK only (reconcile vs EADW + obs↔forecast co-occurrence):
+uv run cdi_crosscheck.py --bn-csv output/drought_bn_2026-01.csv \
+    --cdi-csv bn_inputs/cdi_2026-01.csv --out output/drought_bn_2026-01_xcheck.csv
 
 # 4. Pin the TAMSAT-ALERT WRSI schema (before wiring wrsi_seas)
 uv run tamsat_alert_probe.py --year 2026 --month 01
@@ -63,18 +67,31 @@ uv run wflow_wrsi_prep.py \
 #    agri layer (Approach B): agri_risk = f(met_risk, crop_water_stress(wrsi10)).
 julia --project=. drought_bn_ibf_v1.jl \
     --input-csv bn_inputs/merged_2026-07.csv \
-    --output-csv output/agri_bn_2026-07.csv --tail-risk --cdi --agri
+    --output-csv output/agri_bn_2026-07.csv --tail-risk --agri
 # → adds crop_stress, agri_risk_*, agri_risk_level; primary crma_state now
 #   reflects agri_risk, with crma_state_met kept alongside for comparison.
 ```
 
-## CDI evidence node
+## CDI — cross-check, not evidence (atom-led decision, 2026-07-14)
 
-CDI is a genuine BN parent (not a post-hoc update): `compute_risk_probs(...; cdi)`
-applies an additive modifier (Alert +0.55 … Full_recovery −0.15) plus two expert
-rules (Alert+high-deficit→Extreme; Full_recovery+improving→Minimal). Gated by
-`--cdi`; needs a `cdi_level_idx` (1–6), `cdi_level` string, or soft `cdi_p1..p6`
-column. Absent → `cdi=1` (No_drought), a strict no-op — existing runs unchanged.
+See `../observation-forecast-realignment.md` §5. The BN consumes the **atoms**
+(SPI, fAPAR, soil moisture) as separate observation nodes; CDI is a *composite*
+of those same atoms, so feeding it back double-counts them. CDI is therefore
+**removed from the posterior** and kept only as a cross-check via
+`cdi_crosscheck.py`, which (1) reconciles recomputed CDI against the ICPAC East
+Africa Drought Watch, and (2) reports the observation↔forecast co-occurrence
+(CDI = observed convergence; BN CRMA = forecast concern) as an analyst decision
+aid — the posterior is never touched.
+
+Because CDI is no longer evidence, the cross-check CDI should be the **full** CDI
+(built WITH fAPAR — the default `cdi_data_prep.py`) so it matches EADW; the old
+`--fapar-source none` double-count guard is no longer needed.
+
+> The `--cdi` flag (CDI as a genuine BN parent — additive modifier + expert
+> rules) still exists for the **composite-led** configuration, but is **not** the
+> operational path under the atom-led decision. Don't pass `--cdi` and then also
+> cross-check the same CDI — that would double-count (cdi_crosscheck.py warns if
+> it sees a CDI-as-evidence BN output).
 
 ## wrsi10 node (wflow.jl)
 
