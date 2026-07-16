@@ -72,6 +72,37 @@ julia --project=. drought_bn_ibf_v1.jl \
 #   reflects agri_risk, with crma_state_met kept alongside for comparison.
 ```
 
+## `--tense` — the observation/forecast re-cut (recommended path)
+
+The realigned fusion (`../observation-forecast-realignment.md`) re-cuts the
+divorce-parents seam along **tense** instead of met/crop:
+
+```
+OBSERVATION (antecedent)                 FORECAST (outlook)
+  cur, trn, fpar                           def, spa, tail, agreement, wrsi10, phase
+      → observed_state (5)                     → forecast_state (5)
+                  \                          /
+                   fuse_tense → agri_risk (5) → CRMA
+```
+
+```bash
+julia --project=. drought_bn_ibf_v1.jl --input-csv merged.csv --output-csv out.csv --tense
+```
+
+Self-contained (`run_csv_tense`); every atom is optional and takes its no-op
+index when absent. `fuse_tense` leans toward the **worse** tense (early-warning:
+a forecast can raise the alarm ahead of the ground) and **widens on divergence**
+(genuinely less certain). Output carries `observed_state`, `forecast_state`,
+`agri_risk_level`, `crma_state`, `confidence`, `obs_forecast_divergence`, and an
+`obs_forecast_reading` ∈ {convergent, forecast-leading, obs-leading} decision aid.
+
+Verified: convergent-benign → Monitor; convergent-severe → Review; **both
+divergence cases → Assess** (the "go and look" posture) with dropped confidence.
+Expert knobs (uncalibrated): `_TENSE_WMAX=0.6`, `_TENSE_DIVERGE=0.3`; the fusion
+is currently symmetric in the two tenses. `--tense` reuses the exact tuned SPI
+weights/bins, so nothing calibrated is discarded; `--agri`/`--cdi` remain for
+back-compat.
+
 ## CDI — cross-check, not evidence (atom-led decision, 2026-07-14)
 
 See `../observation-forecast-realignment.md` §5. The BN consumes the **atoms**

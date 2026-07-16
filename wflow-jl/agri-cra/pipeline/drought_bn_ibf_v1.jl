@@ -792,6 +792,145 @@ end
 
 onehot(idx::Int, k::Int) = (v = zeros(Float64, k); v[idx] = 1.0; v)
 
+# ============================================================================
+# OBSERVATION / FORECAST RE-CUT (observation-forecast-realignment.md §4)
+# ============================================================================
+#
+# The divorce-parents fusion is re-cut along TENSE, not met/crop:
+#
+#   OBSERVATION branch (antecedent — "what we have seen")
+#     cur  (ERA5 SPI-3, observed precip deficit)
+#     trn  (ERA5 SPI trend)
+#     fpar (GDO fAPAR anomaly, observed vegetation)
+#     [soil moisture obs — TAMSAT sm_c4grass, slot reserved]
+#        → observed_state (5)
+#
+#   FORECAST branch (outlook — "what we expect")
+#     def, spa, tail  (SEAS5.1 RP-exceedance)
+#     agreement       (SEAS5 ensemble reliability — a weight, not a stress axis)
+#     wrsi10          (wflow / S2S crop-water forecast; future: TAMSAT-ALERT sm)
+#     phase           (phenology — Ky modifier on the forecast crop stress)
+#        → forecast_state (5)
+#
+#   observed_state ⊕ forecast_state → agri_risk (5) → CRMA
+#
+# Both scorers reuse the EXACT tuned weights and probability bins from
+# `compute_risk_probs` (0.55 deficit weight, 0.30 current weight, spa/tail adds,
+# the λ_seas discount, the agreement reliability weight), just partitioned by
+# tense — nothing calibrated is thrown away. See §6 of the realignment doc.
+
+# Tuned probability bins from `compute_risk_probs`'s base-risk cascade, anchored
+# at integer scores 0..5. Index = floor(score)+1. A leading strongly-benign bin
+# (score ≤ 0, for improving / above-normal cases) is added so a clearly benign
+# antecedent maps to Minimal rather than the milder base bin.
+const _RISK_BINS = (
+    [0.70, 0.25, 0.05, 0.0,  0.0 ],   # s ≤ 0  strongly benign
+    [0.50, 0.40, 0.10, 0.0,  0.0 ],   # s = 1
+    [0.10, 0.35, 0.40, 0.15, 0.0 ],   # s = 2
+    [0.05, 0.15, 0.45, 0.30, 0.05],   # s = 3
+    [0.0,  0.05, 0.25, 0.50, 0.20],   # s = 4
+    [0.0,  0.0,  0.10, 0.40, 0.50],   # s ≥ 5
+)
+
+"""Map a drought-stress score to a 5-state risk vector by LINEAR INTERPOLATION
+between the two bracketing tuned bins — so a small modifier (a phenology
+re-weight, an observed-healthy-veg temper) shifts the posterior instead of being
+swallowed inside a discrete bin. Reproduces the tuned bins exactly at integer
+scores."""
+function _score_to_probs(s::Float64)::Vector{Float64}
+    x = clamp(s, 0.0, 5.0)
+    lo = floor(Int, x); frac = x - lo
+    b1 = _RISK_BINS[lo + 1]
+    b2 = _RISK_BINS[min(lo + 2, 6)]
+    p = (1.0 - frac) .* b1 .+ frac .* b2
+    return p ./ sum(p)
+end
+
+"""
+OBSERVATION branch → observed_state [5]. What the ground has actually shown.
+  cur  1..5 (Above_Normal..Severe_Drought)  — dominant observed signal (w 0.55)
+  trn  1..3 (Improving..Deteriorating)      — observed trajectory
+  fpar 1..5 (Unknown/Healthy/Mild/Mod/Severe_Decline) — realised vegetation impact
+
+fAPAR semantics mirror the crop branch: Unknown is a strict no-op, observed-
+Healthy TEMPERS a real precip deficit (ASAP L1), decline escalates.
+"""
+function compute_observed_probs(cur::Int, trn::Int, fpar::Int=1)::Vector{Float64}
+    c = cur - 1                       # 0..4 (drier ↑)
+    t = trn - 1                       # 0..2 (worsening ↑)
+    score = c * 0.55                  # observed current SPI is the dominant term
+    t == 2 && (score += 0.35)         # deteriorating
+    t == 0 && (score -= 0.30)         # improving
+    if fpar >= 3                      # Mild.. Severe_Decline → realised impact
+        score += (fpar - 2) * 0.30    # +0.30 Mild, +0.60 Mod, +0.90 Severe
+    elseif fpar == 2 && c >= 1        # observed-healthy veg under a deficit → temper
+        score -= 0.25
+    end
+    return _score_to_probs(score)
+end
+
+"""
+FORECAST branch → forecast_state [5]. What we expect, and how much to trust it.
+  def 1..5, spa 1..3, tail 1..4, agreement 1..3  (SEAS5.1 RP-exceedance)
+  w10 1..4  (crop-water forecast — wflow wrsi10 / future TAMSAT-ALERT sm)
+  phase 1..3 (Ky modifier on the forecast crop stress)
+
+Reuses the tuned forecast weights of `compute_risk_probs`: deficit weight 0.55,
+spa/tail adds discounted by λ_seas (the shared-signal fix), all scaled by the
+agreement reliability weight w_fcst, plus the bounded low-agreement widening.
+`cur`/`trn` (observations) do NOT appear here — that is the point of the re-cut.
+"""
+function compute_forecast_probs(def::Int, spa::Int, tail::Int, agreement::Int,
+                                w10::Int=1, phase::Int=1;
+                                seas_kappa::Float64=_SEAS_SHARED_KAPPA)::Vector{Float64}
+    d  = def - 1
+    ag = agreement - 1
+    λ  = _seas_redundancy_lambda(def; κ=seas_kappa)
+    w_fcst = ag == 0 ? 0.65 : ag == 1 ? 0.85 : 1.00      # forecast reliability
+    spa_add  = spa == 3 ? 0.5 : spa == 2 ? 0.25 : 0.0
+    tail_add = tail == 4 ? 0.60 : tail == 3 ? 0.35 : tail == 2 ? 0.10 : 0.0
+    crop_add = (w10 - 1) * 0.30                          # crop-water forecast stress
+    if crop_add > 0                                      # phenology re-weights it
+        phase == 2 && (crop_add *= 1.25)                 # flowering amplifies
+        phase == 3 && (crop_add *= 0.75)                 # maturation damps
+    end
+    score = w_fcst * (d * 0.55 + (spa_add + tail_add) * λ + crop_add)
+    probs = _score_to_probs(score)
+    # Bounded low-agreement widening (ignorance must not manufacture risk).
+    u = ag == 0 ? 0.12 : ag == 1 ? 0.05 : 0.0
+    u > 0 && (probs = (1.0 - u) .* probs .+ u .* fill(0.20, 5))
+    return probs ./ sum(probs)
+end
+
+# Tense-fusion parameters (EXPERT first-pass, not measurements — calibrate).
+const _TENSE_WMAX     = 0.60   # lean toward the worse tense (early-warning)
+const _TENSE_DIVERGE  = 0.30   # how much a tense disagreement widens the posterior
+
+"""
+Fuse observed_state ⊕ forecast_state → agri_risk [5].
+
+Observation is the antecedent ("what IS"); forecast is the outlook ("what WILL
+BE"). For an early-warning system the forecast must be able to raise the alarm
+AHEAD of the ground, while the observation grounds it — so agri leans toward the
+WORSE tense (`_TENSE_WMAX·max + (1−_TENSE_WMAX)·min` in risk-index space).
+When the two tenses DIVERGE (forecast-leading = drought coming; obs-leading =
+drought here but forecast eases) the posterior WIDENS — we are genuinely less
+certain — which the CRMA `confidence` then reflects.
+"""
+function fuse_tense(obs::Vector{Float64}, fc::Vector{Float64})::Vector{Float64}
+    o = sum(k * obs[k] for k in 1:5)
+    f = sum(k * fc[k]  for k in 1:5)
+    target = _TENSE_WMAX * max(o, f) + (1.0 - _TENSE_WMAX) * min(o, f)
+    agri = _risk_bump(target)                            # interp on 1..5
+    div = abs(o - f) / 4.0                               # 0..1 tense disagreement
+    if div > 0
+        w = _TENSE_DIVERGE * div
+        agri = (1.0 - w) .* agri .+ w .* fill(0.20, 5)
+    end
+    s = sum(agri); s > 0 && (agri ./= s)
+    return agri
+end
+
 """
 Apply the forecast-agreement blend to a risk posterior.
 
@@ -1588,6 +1727,100 @@ function run_csv(input_csv::String, output_csv::String;
 end
 
 # ============================================================================
+# CSV DRIVER — observation/forecast re-cut (--tense)
+# ============================================================================
+
+"""
+Run the observation/forecast re-cut fusion over an input CSV.
+
+Unlike `run_csv` (met_risk ⊕ crop_stress), this computes:
+  observed_state  = compute_observed_probs(cur, trn, fpar)     — antecedent
+  forecast_state  = compute_forecast_probs(def, spa, tail, agreement, w10, phase)
+  agri_risk       = fuse_tense(observed, forecast)             — then CRMA
+
+Self-contained (does not touch process_all_boundaries / RxInfer). Every column
+is optional: an absent atom takes its no-op index (cur→Normal, trn→Stable,
+def→Very_Low, fpar→Unknown, w10→No_Stress), so a sparse CSV degrades to whatever
+tense actually arrived. `season_active=false` neutralises the forecast crop term
+(no crop in the field ⇒ crop-water stress is not a proposition).
+"""
+function run_csv_tense(input_csv::String, output_csv::String;
+                       cost_loss_ratio::Float64=0.2)
+    df = CSV.read(input_csv, DataFrames.DataFrame)
+    cols = names(df)
+    _f(x) = (x === missing || x === nothing) ? NaN : Float64(x)
+    _s(x) = (x === missing || x === nothing) ? "" : string(x)
+    has(c) = c in cols
+    _soft(prefix, k, row) = all("$(prefix)_p$i" in cols for i in 1:k) ?
+        [_f(row["$(prefix)_p$i"]) for i in 1:k] : nothing
+
+    n = DataFrames.nrow(df)
+    obs = [zeros(5) for _ in 1:n]; fc = [zeros(5) for _ in 1:n]
+    agri = [zeros(5) for _ in 1:n]
+    div = zeros(n); n_fallow = 0
+
+    for (i, row) in enumerate(DataFrames.eachrow(df))
+        # ── observation atoms ──
+        cur = has("current_spi3") ? categorize_current_spi3(_f(row.current_spi3)) : 2
+        trn = has("spi3_trend")   ? categorize_spi3_trend(_s(row.spi3_trend))     : 2
+        fpar = has("fpar_value") ? categorize_fpar(_f(row.fpar_value)) :
+               has("fpar_class") ? categorize_fpar(_s(row.fpar_class)) : 1
+        # ── forecast atoms ──
+        def = has("forecast_deficit_prob") ? categorize_deficit(_f(row.forecast_deficit_prob)) : 1
+        spa = has("spatial_coverage")      ? categorize_spatial(_f(row.spatial_coverage))      : 1
+        tail = has("ens_min_spi")          ? categorize_tail_risk(_f(row.ens_min_spi))         : 1
+        agr = has("forecast_agreement")    ? categorize_agreement(_s(row.forecast_agreement))  : 3
+        w10 = has("wrsi10_value") ? categorize_wrsi10(_f(row.wrsi10_value)) :
+              has("wrsi10_class") ? categorize_wrsi10(_s(row.wrsi10_class)) : 1
+        ph_soft = _soft("phase", 3, row)
+        phase = ph_soft === nothing ? 1 : argmax(ph_soft)
+        # season mask: out of season → no crop-water forecast term
+        in_season = !has("season_active") || _truthy(row.season_active)
+        in_season || (w10 = 1; n_fallow += 1)
+
+        obs[i] = compute_observed_probs(cur, trn, fpar)
+        fc[i]  = compute_forecast_probs(def, spa, tail, agr, w10, phase)
+        agri[i] = fuse_tense(obs[i], fc[i])
+        div[i] = abs(sum(k*obs[i][k] for k in 1:5) - sum(k*fc[i][k] for k in 1:5))
+    end
+
+    _lead(o, f, d) = d < 0.5 ? "convergent" :
+                     f > o   ? "forecast-leading" : "obs-leading"
+    crma = [compute_crma_state(a; cost_loss_ratio) for a in agri]
+    outdf = DataFrames.DataFrame(
+        boundary_id   = has("id")   ? [_s(r.id)   for r in DataFrames.eachrow(df)] : string.(1:n),
+        boundary_name = has("name") ? [_s(r.name) for r in DataFrames.eachrow(df)] : string.(1:n),
+        country       = has("country") ? [_s(r.country) for r in DataFrames.eachrow(df)] : fill("", n),
+        observed_state = [RISK_STATES[argmax(o)] for o in obs],
+        forecast_state = [RISK_STATES[argmax(f)] for f in fc],
+        agri_risk_level = [AGRI_RISK_STATES[argmax(a)] for a in agri],
+        crma_state    = [CRMA_STATES[c[1]] for c in crma],
+        traffic_light = [TRAFFIC_LIGHT[CRMA_STATES[c[1]]] for c in crma],
+        confidence    = [posterior_confidence(a) for a in agri],
+        obs_forecast_divergence = round.(div, digits=3),
+        obs_forecast_reading = [_lead(sum(k*obs[i][k] for k in 1:5),
+                                       sum(k*fc[i][k] for k in 1:5), div[i]) for i in 1:n],
+        obs_minimal = [o[1] for o in obs], obs_low = [o[2] for o in obs],
+        obs_moderate = [o[3] for o in obs], obs_high = [o[4] for o in obs],
+        obs_extreme = [o[5] for o in obs],
+        fc_minimal = [f[1] for f in fc], fc_low = [f[2] for f in fc],
+        fc_moderate = [f[3] for f in fc], fc_high = [f[4] for f in fc],
+        fc_extreme = [f[5] for f in fc],
+        agri_minimal = [a[1] for a in agri], agri_low = [a[2] for a in agri],
+        agri_moderate = [a[3] for a in agri], agri_high = [a[4] for a in agri],
+        agri_extreme = [a[5] for a in agri],
+    )
+    mkpath(dirname(abspath(output_csv)))
+    CSV.write(output_csv, outdf)
+    @info "Wrote $output_csv rows=$n (observation/forecast re-cut)"
+    n_fallow > 0 && @info "Season mask: forecast crop term neutralised for $n_fallow/$n out-of-season boundaries"
+    crma_counts = DataFrames.combine(DataFrames.groupby(outdf, :crma_state), DataFrames.nrow => :n)
+    @info "CRMA (agri, tense fusion):" crma_counts
+    read_counts = DataFrames.combine(DataFrames.groupby(outdf, :obs_forecast_reading), DataFrames.nrow => :n)
+    @info "Observation↔forecast reading:" read_counts
+end
+
+# ============================================================================
 # CLI
 # ============================================================================
 
@@ -1848,6 +2081,46 @@ function self_test()
     @assert !isdefined(@__MODULE__, :ACTION_STATES) "the action node must not exist"
     @info "Test 15 (entropy confidence + verb-only ladder):" flat=posterior_confidence(fill(0.2,5)) peaked=conf_mid onehot_=posterior_confidence(onehot(3,5))
 
+    # ── 21. Observation/forecast re-cut ─────────────────────────────────────
+    # observed_state and forecast_state are separately-tensed 5-state risks; the
+    # fusion leans to the worse tense (early-warning) and widens on divergence.
+    he(p) = p[4] + p[5]
+    obs_benign = compute_observed_probs(1, 1, 1)     # Above_Normal, Improving, no veg
+    obs_severe = compute_observed_probs(5, 3, 5)     # Severe drought, deteriorating, veg collapse
+    fc_benign  = compute_forecast_probs(1, 1, 1, 3, 1, 1)
+    fc_severe  = compute_forecast_probs(5, 3, 4, 3, 4, 1)
+    @assert he(obs_severe) > he(obs_benign) "observed severe must outrank observed benign"
+    @assert he(fc_severe)  > he(fc_benign)  "forecast severe must outrank forecast benign"
+
+    # (a) both benign → agri benign (Monitor); both severe → agri severe (Review).
+    a_bb = fuse_tense(obs_benign, fc_benign)
+    a_ss = fuse_tense(obs_severe, fc_severe)
+    @assert compute_crma_state(a_bb)[1] == 1 "both-benign must be Monitor"
+    @assert compute_crma_state(a_ss)[1] == 4 "both-severe must be Review"
+
+    # (b) FORECAST-LEADING: benign ground, severe outlook → the forecast RAISES
+    #     the alarm ahead of the observation (the whole point of early warning).
+    a_fl = fuse_tense(obs_benign, fc_severe)
+    @assert he(a_fl) > he(a_bb) "a severe forecast must raise agri risk above all-benign"
+    @assert he(a_fl) < he(a_ss) "forecast-leading must sit BELOW full convergence"
+
+    # (c) OBS-LEADING: severe ground, benign outlook → still elevated (it is
+    #     already happening), and the tenses diverge → wider (less confident).
+    a_ol = fuse_tense(obs_severe, fc_benign)
+    @assert he(a_ol) > he(a_bb) "a severe observation must raise agri risk"
+    conf_conv = posterior_confidence(a_ss)
+    conf_div  = posterior_confidence(a_ol)
+    @assert conf_div < conf_conv "tense divergence must cost confidence vs convergence"
+    @info "Test 21 (tense re-cut):" forecast_leading_HE=round(he(a_fl), digits=2) obs_leading_HE=round(he(a_ol), digits=2) both_severe_HE=round(he(a_ss), digits=2) conf_convergent=round(conf_conv, digits=2) conf_divergent=round(conf_div, digits=2)
+
+    # (d) absent atoms are no-ops: an all-neutral observation ≈ Minimal, and an
+    #     observed-healthy fpar tempers a real deficit (ASAP L1).
+    @assert argmax(compute_observed_probs(2, 2, 1)) == 1 "neutral observation → Minimal"
+    o_def      = compute_observed_probs(4, 2, 1)     # Moderate drought, no veg data
+    o_def_heal = compute_observed_probs(4, 2, 2)     # ... but veg observed healthy
+    @assert he(o_def_heal) < he(o_def) "observed-healthy veg must temper an observed deficit"
+    @info "Test 21d (obs atoms):" deficit_HE=round(he(o_def), digits=2) deficit_healthyveg_HE=round(he(o_def_heal), digits=2)
+
     @info "All self-tests passed."
 end
 
@@ -1864,18 +2137,24 @@ function main()
     include_cdi = "--cdi" in ARGS
     include_agri = "--agri" in ARGS
     include_fpar = "--fpar" in ARGS
+    include_tense = "--tense" in ARGS
     cl_str = getarg("--cost-loss-ratio")
     cost_loss_ratio = cl_str === nothing ? 0.2 : parse(Float64, cl_str)
     use_rxinfer = !("--legacy-inference" in ARGS)
 
     if input_csv !== nothing && output_csv !== nothing
-        run_csv(input_csv, output_csv; include_agreement, include_tail_risk,
-                include_cdi, include_agri, include_fpar, cost_loss_ratio, use_rxinfer)
+        if include_tense
+            # Observation/forecast re-cut (observation-forecast-realignment.md).
+            run_csv_tense(input_csv, output_csv; cost_loss_ratio)
+        else
+            run_csv(input_csv, output_csv; include_agreement, include_tail_risk,
+                    include_cdi, include_agri, include_fpar, cost_loss_ratio, use_rxinfer)
+        end
         return
     end
 
     @info "Drought BN IBF v1 (Julia/RxInfer)"
-    @info "Usage: julia drought_bn_ibf_v1.jl --input-csv IN.csv --output-csv OUT.csv [--no-agreement] [--tail-risk] [--cdi] [--agri] [--fpar] [--legacy-inference] [--cost-loss-ratio 0.2]"
+    @info "Usage: julia drought_bn_ibf_v1.jl --input-csv IN.csv --output-csv OUT.csv [--no-agreement] [--tail-risk] [--cdi] [--agri] [--fpar] [--tense] [--legacy-inference] [--cost-loss-ratio 0.2]"
     @info "       julia drought_bn_ibf_v1.jl --test"
 
     # Demo: a moderately-stressed boundary
