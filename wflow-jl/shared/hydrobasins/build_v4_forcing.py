@@ -43,11 +43,11 @@ ISO_STEM = {
     "KEN": "05_kenya_ken_v4",     "RWA": "06_rwanda_rwa_v4",
     "SOM": "07_somalia_som_v4",   "SSD": "08_south_sudan_ssd_v4",
     "SDN": "09_sudan_sdn_v4",     "TZA": "10_tanzania_tza_v4",
-    "UGA": "11_uganda_uga_v4",
+    "UGA": "11_uganda_uga_v4",    "MWI": "12_malawi_mwi_v4",
 }
 PERIOD = {c["country_iso"]: (c["start"], c["end"]) for c in REGIONS.values()}
 SELECTED = ["BDI", "ERI", "DJI", "RWA", "TZA", "UGA",
-            "KEN", "SDN", "ETH", "SSD", "SOM"]
+            "KEN", "SDN", "ETH", "SSD", "SOM", "MWI"]
 
 
 def open_era5() -> xr.Dataset:
