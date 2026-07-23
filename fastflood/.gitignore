@@ -1,0 +1,10 @@
+# FastFlood CLI/desktop distribution + example data — heavy binaries, never commit
+# (no trailing slash so it also matches the symlink that points to the large disk)
+fastflood_cli_icpac
+
+# Distribution archive — heavy, never commit
+fastflood_icpac_2024.zip
+*.zip
+
+# Local credentials
+.env
