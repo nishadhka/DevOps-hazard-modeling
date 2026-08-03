@@ -118,3 +118,9 @@ zone_wise_txt_files
 # GeoSFM files
 ea_geofsm_zones_002deg.tif
 geofsm-prod-all-zones-20240712_v2_simplfied.geojson
+
+# wflow-jl mwi: S2S forcing is large binary data (grib) + scratch logs — keep it
+# out of git history (generated forcing lives on the data store / HuggingFace).
+*.grib
+*.grib2
+wflow-jl/mwi/forcing_s2s/
