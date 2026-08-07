@@ -16,8 +16,8 @@
 tamsat_sm_prep.py — build the soil-moisture BN evidence node from TAMSAT,
 in BOTH tenses, as an ANOMALY.
 
-Implements step 1 of `observation-forecast-realignment.md` §9, with the
-corrections in `tamsat-node-critical-evaluation.md` §3 and §9.
+Implements step 1 of the observation/forecast realignment, with the two-archive
+baseline correction applied (see TWO ARCHIVES, TWO BASELINES below).
 
 WHY THIS EXISTS
     `wrsi10` (from wflow_wrsi_prep.py) is the only evidence node in the BN that
@@ -35,14 +35,14 @@ TWO ARCHIVES, TWO BASELINES — THE LOAD-BEARING CONSTRAINT
     Their climatologies differ by ~25-27% (a real SMAP-recalibration difference
     between product versions). Computing an anomaly ACROSS them flips the
     drought sign: for OND 2022 Kenya, 88% (dry, P(low)=0.62) vs 130% (wet,
-    P(low)=0.19). Measured — see tamsat-node-critical-evaluation.md §1.
+    P(low)=0.19). Measured against both archives, not cited.
 
     => EACH TENSE IS STANDARDISED AGAINST ITS OWN PRODUCT'S OWN CLIMATOLOGY,
        and the two are never differenced or cross-normalised. They meet only in
        the BN, as TENSES, comparing state probabilities. This script therefore
        runs one tense at a time (--tense) and writes one CSV per tense.
 
-ANOMALY BANDS (the re-band that closes the §0 limitation)
+ANOMALY BANDS (the re-band that closes the absolute-node limitation)
     z = (beta - clim_mean) / clim_sd, cutoffs on the engine's SPI/CDI
     convention (the same -0.5/-1.0/-1.5 used by categorize_fpar):
 
@@ -51,7 +51,7 @@ ANOMALY BANDS (the re-band that closes the §0 limitation)
 
     Higher index = more stress, matching the BN's monotone convention.
 
-SOFT EVIDENCE — TWO SOURCES OF SPREAD, COMBINED (evaluation §9.3)
+SOFT EVIDENCE — TWO SOURCES OF SPREAD, COMBINED
     The forecast tense has ensemble spread (15 analogue members) AND spatial
     spread (pixels in a basin). Both are real and answer different questions.
     So: per pixel, the class probability is the FRACTION OF MEMBERS in each
@@ -166,7 +166,7 @@ def load_v231(dates) -> xr.DataArray:
 # Its climatology must therefore come from tamsat_alert/historical/, which is
 # ~25-27% higher than v2.3.1 over the same years. Standardising ALERT beta
 # against a v2.3.1 climatology makes a drought look wet -- the exact failure
-# documented in tamsat-node-critical-evaluation.md §1.
+# documented in the module docstring's measured example.
 LEGACY_URL = ("https://gws-access.jasmin.ac.uk/public/tamsat/"
               "tamsat_alert/historical/")
 

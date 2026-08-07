@@ -6,7 +6,7 @@
 """
 cdi_crosscheck.py — use the JRC/ICPAC CDI as a CROSS-CHECK, not as BN evidence.
 
-Design decision (observation-forecast-realignment.md §5, atom-led config):
+Design decision (atom-led config):
 the BN consumes the *atoms* — SPI (precip), fAPAR (vegetation), soil moisture —
 as separate observation nodes. The CDI is a COMPOSITE of those same atoms, so
 feeding it as an evidence node double-counts them (the whole reason the ad-hoc

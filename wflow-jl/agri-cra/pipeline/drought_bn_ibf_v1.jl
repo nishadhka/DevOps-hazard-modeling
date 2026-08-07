@@ -611,7 +611,7 @@ end
 # and an action node inside the BN misleadingly implies the engine prescribes a
 # response. The BN estimates probabilities; the cost-loss decision layer
 # (compute_crma_state) maps them to an analytical posture; real-world action
-# remains with national DRM. See asap/crma-epistemic-curatorial-evaluation.md.
+# remains with national DRM.
 
 # ============================================================================
 # RxInfer MODEL
@@ -793,7 +793,7 @@ end
 onehot(idx::Int, k::Int) = (v = zeros(Float64, k); v[idx] = 1.0; v)
 
 # ============================================================================
-# OBSERVATION / FORECAST RE-CUT (observation-forecast-realignment.md §4)
+# OBSERVATION / FORECAST RE-CUT
 # ============================================================================
 #
 # The divorce-parents fusion is re-cut along TENSE, not met/crop:
@@ -2144,7 +2144,7 @@ function main()
 
     if input_csv !== nothing && output_csv !== nothing
         if include_tense
-            # Observation/forecast re-cut (observation-forecast-realignment.md).
+            # Observation/forecast re-cut.
             run_csv_tense(input_csv, output_csv; cost_loss_ratio)
         else
             run_csv(input_csv, output_csv; include_agreement, include_tail_risk,

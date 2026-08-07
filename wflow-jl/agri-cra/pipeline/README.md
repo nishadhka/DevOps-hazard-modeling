@@ -74,8 +74,8 @@ julia --project=. drought_bn_ibf_v1.jl \
 
 ## `--tense` — the observation/forecast re-cut (recommended path)
 
-The realigned fusion (`../observation-forecast-realignment.md`) re-cuts the
-divorce-parents seam along **tense** instead of met/crop:
+The realigned fusion re-cuts the divorce-parents seam along **tense** instead
+of met/crop:
 
 ```
 OBSERVATION (antecedent)                 FORECAST (outlook)
@@ -105,7 +105,7 @@ back-compat.
 
 ## CDI — cross-check, not evidence (atom-led decision, 2026-07-14)
 
-See `../observation-forecast-realignment.md` §5. The BN consumes the **atoms**
+The BN consumes the **atoms**
 (SPI, fAPAR, soil moisture) as separate observation nodes; CDI is a *composite*
 of those same atoms, so feeding it back double-counts them. CDI is therefore
 **removed from the posterior** and kept only as a cross-check via
