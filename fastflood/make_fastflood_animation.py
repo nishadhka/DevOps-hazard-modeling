@@ -48,17 +48,27 @@ def write_like(path, arr, profile):
     p = profile.copy(); p.update(count=1, dtype="float32", compress="deflate")
     with rasterio.open(path, "w", **p) as d: d.write(arr.astype("float32"), 1)
 
-def run_fastflood(dem, man, rain, dur, whout, key):
+def run_fastflood(dem, man, rain, dur, whout, key, tries=3):
+    """Run FastFlood; retry on the occasional Wine thread crash. Returns True
+    if an output raster was produced."""
     env = dict(os.environ, WINEPREFIX=WINEPREFIX, WINEDEBUG="-all")
     cmd = ["wine", "fastflood.exe", "-key", key, "-dem", dem, "-sim",
            "-man", man, "-rain", rain, "-dur", f"{dur:.4f}", "-whout", whout]
-    subprocess.run(cmd, cwd=CLI, env=env, stdout=subprocess.DEVNULL,
-                   stderr=subprocess.DEVNULL, timeout=900)
+    if os.path.exists(whout):
+        os.remove(whout)
+    for _ in range(tries):
+        subprocess.run(cmd, cwd=CLI, env=env, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=900)
+        if os.path.exists(whout) and os.path.getsize(whout) > 0:
+            return True
+    return False
 
 def main():
     run_dir = Path(sys.argv[1]); rain_dir = Path(sys.argv[2]); out = Path(sys.argv[3])
     title = sys.argv[4]; start = dt.datetime.fromisoformat(sys.argv[5])
     event_h = float(sys.argv[6]); n = int(sys.argv[7]) if len(sys.argv) > 7 else 24
+    frame_ms = int(sys.argv[8]) if len(sys.argv) > 8 else 450   # per-frame GIF hold
+    tz = sys.argv[9] if len(sys.argv) > 9 else "EAT"
     out.mkdir(parents=True, exist_ok=True); frames_dir = out / "frames"; frames_dir.mkdir(exist_ok=True)
     key = read_key()
     dem_tif = str(run_dir / "dem.tif"); man_tif = str(run_dir / "man.tif")
@@ -68,11 +78,18 @@ def main():
     files = sorted(glob.glob(str(rain_dir / "imerg_t*.nc")),
                    key=lambda p: int(p.split("_t")[-1].split(".")[0]))
     nf = len(files); dt_h = event_h / nf                      # hours per frame
-    cum = np.zeros(dem.shape, dtype="float64")
-    cumcache = []                                             # cumulative total after each frame
-    for f in files:
+    # We only need the cumulative total at the N sampled moments, not at every
+    # frame — snapshot on the fly to keep memory at O(N) grids, not O(nframes)
+    # (a 1000-frame event on a 2.4M-cell grid would otherwise need tens of GB).
+    moment_fi = [max(1, int(round(k / n * nf))) - 1 for k in range(1, n + 1)]
+    snap_at = {}                                              # frame index -> moment k
+    for k, fi in enumerate(moment_fi, start=1):
+        snap_at.setdefault(fi, k)
+    cum = np.zeros(dem.shape, dtype="float64"); snaps = {}
+    for i, f in enumerate(files):
         cum += np.nan_to_num(xr.open_dataset(f)["Band1"].values) * dt_h
-        cumcache.append(cum.copy())
+        if i in snap_at:
+            snaps[i] = cum.copy()
 
     # dark hillshade backdrop (computed once)
     ls = LightSource(azdeg=315, altdeg=45)
@@ -80,20 +97,27 @@ def main():
     hs = ls.hillshade(np.nan_to_num(demf, nan=np.nanmin(demf)), vert_exag=3)
     water_cmap = LinearSegmentedColormap.from_list("w", ["#1f4e8c", "#3b8fd0", "#7fe0ff"])
 
-    imgs = []
+    imgs = []; prev_wh = None
     for k in range(1, n + 1):
         t_h = event_h * k / n
-        fi = max(1, int(round(k / n * nf))) - 1              # last frame index for this moment
-        cum_mm = cumcache[fi]
+        fi = moment_fi[k - 1]                                # last frame index for this moment
+        cum_mm = snaps[fi]
         # Drive FastFlood with the cumulative storm TOTAL delivered over the full
         # event duration, so inundation grows monotonically as rain accumulates
         # and the final moment equals the full-event result.
         mean_int = cum_mm / event_h                          # mm/hr, fixed denominator
         rain_tif = str(out / f"_rain_{k:02d}.tif"); wh_tif = str(frames_dir / f"wh_{k:02d}.tif")
         write_like(rain_tif, mean_int, profile)
-        run_fastflood(dem_tif, man_tif, rain_tif, event_h, wh_tif, key)
-        with rasterio.open(wh_tif) as s: wh = s.read(1).astype("float64")
-        wh = np.where(np.isfinite(wh), wh, 0.0)
+        ok = run_fastflood(dem_tif, man_tif, rain_tif, event_h, wh_tif, key)
+        if ok:
+            with rasterio.open(wh_tif) as s: wh = s.read(1).astype("float64")
+            wh = np.where(np.isfinite(wh), wh, 0.0)
+        else:
+            # FastFlood crashed all retries for this moment — reuse the previous
+            # frame's depth so the animation stays intact rather than aborting.
+            print(f"  moment {k}/{n}  FastFlood failed, reusing previous frame")
+            wh = prev_wh if prev_wh is not None else np.zeros_like(dem, dtype="float64")
+        prev_wh = wh
 
         # ---- render frame, RIM2D-style ----
         h, w = dem.shape; dpi = 100
@@ -105,7 +129,7 @@ def main():
         stamp = (start + dt.timedelta(hours=t_h)).strftime("%d %b %Y %H:%M")
         ax.text(0.012, 0.965, title, transform=ax.transAxes, color="white",
                 fontsize=13, weight="bold", va="top", ha="left")
-        ax.text(0.988, 0.965, stamp + " EAT", transform=ax.transAxes, color="#ffb020",
+        ax.text(0.988, 0.965, f"{stamp} {tz}", transform=ax.transAxes, color="#ffb020",
                 fontsize=13, weight="bold", va="top", ha="right")
         png = str(frames_dir / f"frame_{k:02d}.png"); fig.savefig(png, dpi=dpi); plt.close(fig)
         im = Image.open(png).convert("RGB")
@@ -115,8 +139,12 @@ def main():
         print(f"  moment {k}/{n}  t={t_h:4.1f}h  wet(>5cm)={100*(wh>0.05).mean():4.1f}%  maxdepth={wh.max():.2f}m")
 
     gif = out / "preview.gif"
-    imgs[0].save(gif, save_all=True, append_images=imgs[1:], duration=180, loop=0, optimize=True)
-    print(f"wrote {gif}  ({len(imgs)} frames)")
+    # slower playback; hold the first and last (peak) frames longer so the build-up reads
+    durations = [frame_ms] * len(imgs)
+    durations[0] = max(frame_ms, 900); durations[-1] = max(frame_ms * 4, 2500)
+    imgs[0].save(gif, save_all=True, append_images=imgs[1:], duration=durations,
+                 loop=0, optimize=True)
+    print(f"wrote {gif}  ({len(imgs)} frames, {frame_ms}ms/frame, peak-hold)")
 
 if __name__ == "__main__":
     main()
