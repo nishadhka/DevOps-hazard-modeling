@@ -24,6 +24,7 @@ import sys, os, glob, subprocess, datetime as dt
 from pathlib import Path
 import numpy as np, xarray as xr, rasterio
 from rasterio.transform import from_origin
+from scipy import ndimage
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -39,6 +40,22 @@ def read_key():
         if line.startswith("FASTFLOOD_KEY="):
             return line.split("=", 1)[1].strip()
     raise SystemExit("no key")
+
+def perm_water(dem, cell_m=30.0, relief_thr=0.5, win=5, min_km2=1.0):
+    """Permanent water bodies (lakes / reservoirs / sea) = large connected areas
+    of near-zero DEM relief. These pond as flat basins in FastFlood but are not
+    flood; rendered as static dark water like the RIM2D basemap. Floodplains keep
+    micro-relief (channels/ridges) so they are not caught at this area threshold."""
+    d = np.nan_to_num(dem, nan=1e9)
+    relief = ndimage.maximum_filter(d, win) - ndimage.minimum_filter(
+        np.nan_to_num(dem, nan=-1e9), win)
+    flat = (relief < relief_thr) & np.isfinite(dem)
+    lbl, nlab = ndimage.label(flat)
+    if nlab == 0:
+        return np.zeros_like(flat)
+    sizes = ndimage.sum(np.ones_like(lbl), lbl, range(1, nlab + 1))
+    keep = np.where(sizes >= min_km2 * 1e6 / (cell_m * cell_m))[0] + 1
+    return np.isin(lbl, keep)
 
 def grid_from_dem(dem_tif):
     with rasterio.open(dem_tif) as s:
@@ -91,11 +108,19 @@ def main():
         if i in snap_at:
             snaps[i] = cum.copy()
 
-    # dark hillshade backdrop (computed once)
+    # dark hillshade backdrop + permanent-water mask (computed once)
     ls = LightSource(azdeg=315, altdeg=45)
     demf = np.where(np.isfinite(dem), dem, np.nan)
     hs = ls.hillshade(np.nan_to_num(demf, nan=np.nanmin(demf)), vert_exag=3)
     water_cmap = LinearSegmentedColormap.from_list("w", ["#1f4e8c", "#3b8fd0", "#7fe0ff"])
+    pw_path = out / "permanent_water.tif"
+    if pw_path.exists():                                     # prefer precomputed (build_water_mask.py)
+        with rasterio.open(pw_path) as s: pw = s.read(1) > 0.5
+    else:                                                    # fallback: DEM-flatness heuristic
+        pw = perm_water(dem)
+        write_like(str(pw_path), pw.astype("float32"), profile)
+    print(f"  permanent water mask: {100*pw.mean():.1f}% of domain")
+    render_only = os.environ.get("FF_RENDER_ONLY") == "1"
 
     imgs = []; prev_wh = None
     for k in range(1, n + 1):
@@ -107,8 +132,11 @@ def main():
         # and the final moment equals the full-event result.
         mean_int = cum_mm / event_h                          # mm/hr, fixed denominator
         rain_tif = str(out / f"_rain_{k:02d}.tif"); wh_tif = str(frames_dir / f"wh_{k:02d}.tif")
-        write_like(rain_tif, mean_int, profile)
-        ok = run_fastflood(dem_tif, man_tif, rain_tif, event_h, wh_tif, key)
+        if render_only and os.path.exists(wh_tif):
+            ok = True                                        # reuse saved depth, skip FastFlood
+        else:
+            write_like(rain_tif, mean_int, profile)
+            ok = run_fastflood(dem_tif, man_tif, rain_tif, event_h, wh_tif, key)
         if ok:
             with rasterio.open(wh_tif) as s: wh = s.read(1).astype("float64")
             wh = np.where(np.isfinite(wh), wh, 0.0)
@@ -124,7 +152,11 @@ def main():
         fig = plt.figure(figsize=(w/dpi, h/dpi), dpi=dpi); ax = fig.add_axes([0, 0, 1, 1]); ax.axis("off")
         ax.imshow(hs, cmap="gray", vmin=0, vmax=1)
         ax.imshow(np.dstack([np.zeros_like(hs)]*3 + [np.full_like(hs, 0.55)]))  # navy tint
-        depth = np.ma.masked_less_equal(wh, 0.05)
+        # permanent water bodies as static dark water (not flood)
+        pw_layer = np.ma.masked_where(~pw, np.ones_like(hs))
+        ax.imshow(pw_layer, cmap=LinearSegmentedColormap.from_list("pw", ["#0d2438", "#0d2438"]), alpha=0.9)
+        # flood depth, excluding permanent-water cells
+        depth = np.ma.masked_where((wh <= 0.05) | pw, wh)
         ax.imshow(depth, cmap=water_cmap, vmin=0.05, vmax=3.0, alpha=0.95)
         stamp = (start + dt.timedelta(hours=t_h)).strftime("%d %b %Y %H:%M")
         ax.text(0.012, 0.965, title, transform=ax.transAxes, color="white",
@@ -135,8 +167,9 @@ def main():
         im = Image.open(png).convert("RGB")
         gw = 720; im = im.resize((gw, round(gw * h / w)), Image.LANCZOS)  # match RIM2D width
         imgs.append(im.convert("P", palette=Image.ADAPTIVE))
-        os.remove(rain_tif)
-        print(f"  moment {k}/{n}  t={t_h:4.1f}h  wet(>5cm)={100*(wh>0.05).mean():4.1f}%  maxdepth={wh.max():.2f}m")
+        if os.path.exists(rain_tif): os.remove(rain_tif)
+        flood = (wh > 0.05) & ~pw
+        print(f"  moment {k}/{n}  t={t_h:4.1f}h  wet(>5cm)={100*flood.mean():4.1f}%  maxdepth={np.where(~pw, wh, 0).max():.2f}m")
 
     gif = out / "preview.gif"
     # slower playback; hold the first and last (peak) frames longer so the build-up reads

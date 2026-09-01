@@ -19,6 +19,13 @@ Converted 1:1 from the RIM2D case NetCDFs (same 30 m grid, UTM CRS):
 | `roughness.tif` | `roughness.nc` | Manning's n |
 | `infiltration.tif` | `pervious_surface.nc` × 12 | infiltration capacity (mm/hr) |
 | `rain_mean_mmhr.tif` | `rain/imerg_t*.nc` | event-mean intensity (mm/hr) |
+| `permanent_water.tif` | Natural Earth lakes + DEM sea | permanent-water mask (1 = lake/reservoir/sea) |
+
+Permanent water bodies (lakes, reservoirs, ocean) pond as flat basins in FastFlood
+but are not flood, so they are masked out of the depth maps/animation (rendered as
+static dark water, like the RIM2D basemap). The mask is Natural Earth 10m lakes plus
+DEM cells at/below 0 m connected to a domain edge (ocean); flat inland floodplains
+are deliberately left unmasked. See `build_water_mask.py`.
 
 FastFlood's `-rain` is an intensity applied as `rain × dur`, so the IMERG frames
 (mm/hr, per 30 min) are reduced to an event-mean-intensity map:

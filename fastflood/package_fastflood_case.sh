@@ -28,6 +28,7 @@ cp "$SRC/rain_mmhr.tif" "$PKG/input/rain_mean_mmhr.tif"
 cp "$SRC/${slug}_ff_wh.tif" "$PKG/output/${slug}_wd_max.tif"
 [ -d "$ANIM/frames" ] && cp "$ANIM/frames"/wh_*.tif "$PKG/output/frames/" 2>/dev/null || true
 [ -f "$ANIM/preview.gif" ] && cp "$ANIM/preview.gif" "$PKG/output/preview.gif"
+[ -f "$ANIM/permanent_water.tif" ] && cp "$ANIM/permanent_water.tif" "$PKG/input/permanent_water.tif"
 
 # the FastFlood "definition" — the exact command line
 cat > "$PKG/run_command.txt" <<EOF
